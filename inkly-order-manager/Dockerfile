@@ -20,15 +20,9 @@ RUN npx playwright install chromium
 # Copy source code.
 COPY . .
 
-# Build-time public env vars for Next.js.
-ARG NEXT_PUBLIC_SUPABASE_URL
-ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
-ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
-ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
-
-# Write .env.production so Next.js picks up NEXT_PUBLIC_ vars at build time.
-RUN echo "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL" > .env.production && \
-    echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY" >> .env.production
+# Public env vars for Next.js (safe to embed — these are public anon keys).
+ENV NEXT_PUBLIC_SUPABASE_URL=https://khpdyxacmpuaqvohpzdp.supabase.co
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtocGR5eGFjbXB1YXF2b2hwemRwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0OTI0OTksImV4cCI6MjA4OTA2ODQ5OX0.n5W-8yI1nwTxDqB-zCMpar8uNGm9YtZv8gcBbuCuCGI
 
 # Build app.
 RUN npm run build
