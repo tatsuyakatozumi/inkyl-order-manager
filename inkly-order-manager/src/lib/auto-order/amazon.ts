@@ -7,6 +7,23 @@ export class AmazonAutoOrder extends BaseAutoOrder {
     super('Amazon');
   }
 
+  /** Override: use Firefox instead of Chromium to avoid Amazon bot detection. */
+  async initialize(): Promise<void> {
+    const { firefox } = await import('playwright');
+    console.log('[Amazon] initialize: launching Firefox (stealth)');
+    this.browser = await firefox.launch({
+      headless: true,
+      args: [],
+    });
+    this.page = await this.browser.newPage({
+      userAgent:
+        'Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0',
+      viewport: { width: 1280, height: 800 },
+      locale: 'ja-JP',
+    });
+    this.loggedIn = false;
+  }
+
   getTopPageUrl(): string {
     return `${AMAZON_BASE_URL}/`;
   }

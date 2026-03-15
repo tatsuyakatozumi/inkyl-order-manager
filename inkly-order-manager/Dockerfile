@@ -16,8 +16,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install --legacy-peer-deps
 
-# Install Chromium for Playwright.
-RUN npx playwright install chromium
+# Install Chromium + Firefox for Playwright (Firefox used for Amazon).
+RUN npx playwright install chromium firefox
 
 # Copy source code.
 COPY . .
