@@ -51,6 +51,24 @@ export abstract class BaseAutoOrder {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       viewport: { width: 1280, height: 800 },
     });
+
+    // Stealth: hide webdriver flag
+    await this.page.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    });
+    // Stealth: fake plugins
+    await this.page.addInitScript(() => {
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5],
+      });
+    });
+    // Stealth: set languages
+    await this.page.addInitScript(() => {
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['ja-JP', 'ja', 'en-US', 'en'],
+      });
+    });
+
     this.loggedIn = false;
   }
 
