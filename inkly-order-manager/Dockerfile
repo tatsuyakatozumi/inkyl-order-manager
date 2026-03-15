@@ -11,6 +11,7 @@ COPY package*.json ./
 RUN npm install --legacy-peer-deps
 RUN npx playwright install chromium
 COPY . .
+RUN ls -la .env* && cat .env.production
 
 ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
