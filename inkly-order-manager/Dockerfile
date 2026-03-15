@@ -18,7 +18,7 @@ COPY package*.json ./
 RUN npm install --legacy-peer-deps
 
 # Install Chromium + Firefox for Playwright (Firefox used for Amazon).
-RUN npx playwright install chromium firefox
+RUN npx playwright install chromium firefox --with-deps
 
 # Copy source code.
 COPY . .
