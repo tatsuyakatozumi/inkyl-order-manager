@@ -54,66 +54,96 @@ export class AmazonAutoOrder extends BaseAutoOrder {
 
   async navigateToLoginPage(): Promise<void> {
     if (!this.page) return;
-    console.log('[Amazon] navigateToLoginPage: looking for account link');
-    const signInLink = await this.page.$('#nav-link-accountList')
-      ?? await this.page.$('a:has-text("ログイン")')
-      ?? await this.page.$('a:has-text("サインイン")');
-    if (signInLink) {
-      await signInLink.click();
-      await this.safeWaitForNetworkIdle();
-    } else {
-      console.log('[Amazon] navigateToLoginPage: no link found, navigating directly');
-      await this.page.goto(`${AMAZON_BASE_URL}/ap/signin`, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await this.safeWaitForNetworkIdle();
-    }
+    // Navigate directly to login URL instead of clicking links (avoids ERR_ABORTED)
+    const loginUrl = 'https://www.amazon.co.jp/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2Fwww.amazon.co.jp%2F&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=jpflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0';
+    console.log('[Amazon] navigateToLoginPage: going to login URL directly');
+    await this.page.goto(loginUrl, { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
     console.log('[Amazon] navigateToLoginPage: URL after nav:', this.page.url());
+    await this.takeScreenshot('navigate_login');
+
+    // Check if we actually landed on a login page
+    const hasEmailField = await this.page.$('input#ap_email, input[name="email"]');
+    if (!hasEmailField) {
+      // Fallback URL
+      console.log('[Amazon] navigateToLoginPage: no email field, trying fallback URL');
+      await this.page.goto('https://www.amazon.co.jp/gp/sign-in.html', { waitUntil: 'networkidle', timeout: 30000 }).catch(() => {});
+      console.log('[Amazon] navigateToLoginPage: fallback URL:', this.page.url());
+      await this.takeScreenshot('navigate_login_fallback');
+    }
   }
 
   async login(credentials: { username: string; password: string }): Promise<boolean> {
     if (!this.page) return false;
     try {
       console.log('[Amazon] login: starting, URL:', this.page.url());
-      await this.takeScreenshot('login_page');
+      await this.takeScreenshot('login_start');
 
-      // Step 1: Email
-      const emailField = await this.page.$('#ap_email');
-      if (emailField) {
-        console.log('[Amazon] login: filling email');
-        await this.page.fill('#ap_email', credentials.username);
-        await this.page.click('#continue');
-        await this.page.waitForTimeout(2000);
-        await this.safeWaitForNetworkIdle();
+      // Verify we're on a login page
+      const currentUrl = this.page.url();
+      const isLoginPage = currentUrl.includes('ap/signin') || currentUrl.includes('sign-in');
+      const hasEmailField = await this.page.$('input#ap_email, input[name="email"]');
+      console.log('[Amazon] login: isLoginPage:', isLoginPage, 'hasEmailField:', !!hasEmailField);
+
+      if (!hasEmailField) {
+        console.log('[Amazon] login: no email field found, cannot proceed');
+        await this.takeScreenshot('login_no_email_field');
+        return false;
       }
 
-      // Step 2: Password
-      console.log('[Amazon] login: filling password');
-      await this.page.waitForSelector('#ap_password', { timeout: 10000 });
-      await this.page.fill('#ap_password', credentials.password);
-      await this.page.click('#signInSubmit');
+      // Step 1: Email
+      console.log('[Amazon] login: filling email');
+      await this.page.fill('input#ap_email, input[name="email"]', credentials.username);
+      await this.takeScreenshot('login_email_filled');
+      await this.page.click('input#continue, #continue');
       await this.page.waitForTimeout(3000);
       await this.safeWaitForNetworkIdle();
+      console.log('[Amazon] login: after email submit, URL:', this.page.url());
+      await this.takeScreenshot('login_after_email');
 
-      console.log('[Amazon] login: post-login URL:', this.page.url());
-      await this.takeScreenshot('login_after');
+      // Step 2: Password
+      console.log('[Amazon] login: waiting for password field');
+      await this.page.waitForSelector('input#ap_password, input[name="password"]', { timeout: 15000 });
+      console.log('[Amazon] login: filling password');
+      await this.page.fill('input#ap_password, input[name="password"]', credentials.password);
+      await this.takeScreenshot('login_password_filled');
+      await this.page.click('input#signInSubmit, #signInSubmit');
+      await this.page.waitForTimeout(5000);
+      await this.safeWaitForNetworkIdle();
+      console.log('[Amazon] login: after password submit, URL:', this.page.url());
+      await this.takeScreenshot('login_after_password');
 
-      // Step 3: Check for 2FA / OTP
-      const otpField = await this.page.$('#auth-mfa-otpcode, input[name="otpCode"]');
-      if (otpField) {
+      // Step 3: Check for 2FA
+      if (await this.page.locator('input#auth-mfa-otpcode, input[name="otpCode"]').count() > 0) {
         console.log('[Amazon] login: 2FA/OTP required');
         await this.takeScreenshot('login_2fa');
         throw new Error('2段階認証が必要です。管理画面から認証コードを入力してください。');
       }
 
-      // Step 4: Verify login
-      // Navigate to top page to check login state
+      // Step 4: Check for CAPTCHA
+      if (await this.page.locator('img#auth-captcha-image').count() > 0) {
+        console.log('[Amazon] login: CAPTCHA detected');
+        await this.takeScreenshot('login_captcha');
+        throw new Error('CAPTCHAが表示されました。手動でログインしてください。');
+      }
+
+      // Step 5: Verify login succeeded
+      const postLoginUrl = this.page.url();
+      if (postLoginUrl.includes('ap/signin')) {
+        console.log('[Amazon] login: still on signin page, login likely failed');
+        await this.takeScreenshot('login_still_signin');
+        return false;
+      }
+
+      // Navigate to top to confirm
       await this.page.goto(this.getTopPageUrl(), { waitUntil: 'domcontentloaded', timeout: 30000 });
       await this.safeWaitForNetworkIdle();
+      await this.takeScreenshot('login_final');
 
       return await this.isLoggedIn();
     } catch (e) {
       console.error('[Amazon] login error:', e);
       await this.takeScreenshot('login_error');
-      if (e instanceof Error && e.message.includes('2段階認証')) throw e;
+      if (e instanceof Error && (e.message.includes('2段階認証') || e.message.includes('CAPTCHA'))) throw e;
       return false;
     }
   }
