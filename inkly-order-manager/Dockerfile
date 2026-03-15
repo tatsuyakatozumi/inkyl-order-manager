@@ -1,12 +1,13 @@
 ﻿FROM node:20-slim
 
-# Install libraries needed by Playwright/Chromium.
+# Install libraries needed by Playwright (Chromium + Firefox).
 RUN apt-get update && apt-get install -y \
   libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
   libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 \
   libpango-1.0-0 libcairo2 libasound2 libxshmfence1 \
   libxfixes3 libxext6 libx11-6 libx11-xcb1 libxcb1 libxcursor1 \
   libxi6 libxtst6 libglib2.0-0 libdbus-1-3 \
+  libgtk-3-0 libgdk-pixbuf2.0-0 libpangocairo-1.0-0 libcairo-gobject2 \
   fonts-noto-cjk \
   && rm -rf /var/lib/apt/lists/*
 
