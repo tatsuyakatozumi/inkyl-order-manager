@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getAutoOrderModule } from '@/lib/auto-order';
 import { decryptCredentials } from '@/lib/utils/encryption';
+import { uploadScreenshot } from '@/lib/utils/screenshot-uploader';
 
 interface AdhocItem {
   itemId: string;
@@ -172,14 +173,23 @@ export async function POST(request: NextRequest) {
         console.log('[Adhoc] executing auto order for supplier:', supplier.name);
         const decrypted = decryptCredentials(supplier.credentials_encrypted);
         const credentials: { username: string; password: string } = JSON.parse(decrypted);
-        console.log('[Adhoc] credentials found:', !!credentials);
-        console.log('[Adhoc] items to order:', group.orderItems.length);
-        console.log('[Adhoc] autoConfirm:', autoConfirm ?? false);
-        const { results, checkoutSuccess, cartUrl } = await autoOrder.executeOrder(
+        console.log('[Adhoc] items to order:', group.orderItems.length, 'autoConfirm:', autoConfirm ?? false);
+        const { results, checkoutSuccess, cartUrl, screenshotPath } = await autoOrder.executeOrder(
           credentials,
           group.orderItems,
           autoConfirm ?? false,
         );
+
+        // Upload screenshot to Supabase Storage
+        let screenshotUrl: string | null = null;
+        let screenshotExpiresAt: string | null = null;
+        if (screenshotPath) {
+          const uploaded = await uploadScreenshot(screenshotPath);
+          if (uploaded) {
+            screenshotUrl = uploaded.signedUrl;
+            screenshotExpiresAt = uploaded.expiresAt;
+          }
+        }
 
         console.log('[Adhoc] auto order complete, checkoutSuccess:', checkoutSuccess);
         for (const result of results) {
@@ -190,6 +200,8 @@ export async function POST(request: NextRequest) {
             errorMessage: result.errorMessage ?? null,
             cartUrl,
             checkoutSuccess,
+            screenshotUrl,
+            screenshotExpiresAt,
           });
         }
 

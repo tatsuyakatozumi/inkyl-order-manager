@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { ExternalLink, ShoppingCart, Check, Zap, AlertTriangle } from 'lucide-react';
+import { ExternalLink, ShoppingCart, Check, Zap, AlertTriangle, Image } from 'lucide-react';
 import type { Supplier, Item, OrderStatus } from '@/types/database';
 import {
   updateOrderAdjustment,
@@ -114,6 +114,8 @@ export function MonthlyOrders({ suppliers }: MonthlyOrdersProps) {
   const [loading, setLoading] = useState(false);
   const [executing, setExecuting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [screenshotUrls, setScreenshotUrls] = useState<Record<string, string>>({});
+  const [confirming, setConfirming] = useState<string | null>(null);
 
   // The full list from the API, split into auto vs manual
   const [autoOrders, setAutoOrders] = useState<CalculatedOrderItem[]>([]);
@@ -256,6 +258,11 @@ export function MonthlyOrders({ suppliers }: MonthlyOrdersProps) {
         const data = await res.json();
         const newStatus = data.checkoutSuccess ? 'ordered' : 'confirmed';
 
+        // Store screenshot URL
+        if (data.screenshotUrl) {
+          setScreenshotUrls((prev) => ({ ...prev, [supplier.id]: data.screenshotUrl }));
+        }
+
         // Update statuses locally
         setAutoOrders((prev) =>
           prev.map((o) =>
@@ -363,8 +370,49 @@ export function MonthlyOrders({ suppliers }: MonthlyOrdersProps) {
               orders={autoOrders}
               adjustments={adjustments}
               executing={executing}
+              screenshotUrls={screenshotUrls}
+              confirming={confirming}
               onAdjustmentChange={handleAdjustmentChange}
               onExecuteOrder={handleExecuteOrder}
+              onConfirmOrder={async (supplier, items) => {
+                if (!confirm(`${supplier.name} の注文を確定しますか？`)) return;
+                setConfirming(supplier.id);
+                try {
+                  const idempotencyKey = crypto.randomUUID();
+                  const res = await fetch('/api/orders/confirm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      supplierName: supplier.name,
+                      orderHistoryIds: items.map((i) => i.id),
+                      idempotencyKey,
+                    }),
+                  });
+                  if (!res.ok) {
+                    const body = await res.json().catch(() => ({}));
+                    throw new Error(body.error ?? `HTTP ${res.status}`);
+                  }
+                  const data = await res.json();
+                  if (data.screenshotUrl) {
+                    setScreenshotUrls((prev) => ({ ...prev, [supplier.id]: data.screenshotUrl }));
+                  }
+                  if (data.success) {
+                    setAutoOrders((prev) =>
+                      prev.map((o) =>
+                        items.some((i) => i.item_id === o.item_id)
+                          ? { ...o, order_status: 'ordered' as OrderStatus }
+                          : o,
+                      ),
+                    );
+                  } else {
+                    alert('注文確定に失敗しました。カートには投入済みです。');
+                  }
+                } catch (e: any) {
+                  alert(`発注確定エラー: ${e.message}`);
+                } finally {
+                  setConfirming(null);
+                }
+              }}
             />
           )}
 
@@ -424,14 +472,20 @@ function AutoSection({
   orders,
   adjustments,
   executing,
+  screenshotUrls,
+  confirming,
   onAdjustmentChange,
   onExecuteOrder,
+  onConfirmOrder,
 }: {
   orders: CalculatedOrderItem[];
   adjustments: Record<string, number>;
   executing: string | null;
+  screenshotUrls: Record<string, string>;
+  confirming: string | null;
   onAdjustmentChange: (order: CalculatedOrderItem, value: number) => void;
   onExecuteOrder: (supplier: Supplier, items: CalculatedOrderItem[], autoConfirm: boolean) => void;
+  onConfirmOrder: (supplier: Supplier, items: CalculatedOrderItem[]) => void;
 }) {
   const grouped = groupBySupplier(orders);
 
@@ -585,35 +639,66 @@ function AutoSection({
 
             {/* Execute buttons */}
             {group.supplier.auto_order_supported && (
-              <div className="flex gap-3 border-t px-4 py-3">
-                <button
-                  onClick={() => onExecuteOrder(group.supplier, group.items, false)}
-                  disabled={executing === supplierId}
-                  className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {executing === supplierId ? (
-                    '実行中...'
-                  ) : (
-                    <>
-                      <ShoppingCart className="h-4 w-4" />
-                      カートに投入のみ
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={() => onExecuteOrder(group.supplier, group.items, true)}
-                  disabled={executing === supplierId}
-                  className="inline-flex items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
-                >
-                  {executing === supplierId ? (
-                    '実行中...'
-                  ) : (
-                    <>
+              <div className="border-t px-4 py-3">
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => onExecuteOrder(group.supplier, group.items, false)}
+                    disabled={executing === supplierId}
+                    className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {executing === supplierId ? (
+                      '実行中...'
+                    ) : (
+                      <>
+                        <ShoppingCart className="h-4 w-4" />
+                        カートに投入のみ
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => onExecuteOrder(group.supplier, group.items, true)}
+                    disabled={executing === supplierId}
+                    className="inline-flex items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {executing === supplierId ? (
+                      '実行中...'
+                    ) : (
+                      <>
+                        <Zap className="h-4 w-4" />
+                        注文確定まで実行
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Screenshot */}
+                {screenshotUrls[supplierId] && (
+                  <div className="mt-3">
+                    <div className="mb-1 flex items-center gap-1 text-xs text-gray-500">
+                      <Image className="h-3 w-3" />
+                      カートのスクリーンショット
+                    </div>
+                    <img
+                      src={screenshotUrls[supplierId]}
+                      alt={`${group.supplier.name} cart screenshot`}
+                      className="max-h-64 rounded border object-contain"
+                    />
+                  </div>
+                )}
+
+                {/* Confirm button (after cart-only) */}
+                {group.items.some((i) => i.order_status === ('confirmed' as OrderStatus)) && screenshotUrls[supplierId] && (
+                  <div className="mt-3">
+                    <button
+                      onClick={() => onConfirmOrder(group.supplier, group.items)}
+                      disabled={confirming === supplierId}
+                      className="inline-flex items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
+                    >
                       <Zap className="h-4 w-4" />
-                      注文確定まで実行
-                    </>
-                  )}
-                </button>
+                      {confirming === supplierId ? '確定中...' : '注文を確定する'}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

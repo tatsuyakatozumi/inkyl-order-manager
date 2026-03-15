@@ -11,6 +11,7 @@ import {
   CheckCircle,
   AlertTriangle,
   XCircle,
+  Image,
 } from 'lucide-react';
 import Link from 'next/link';
 import { ItemSelectModal } from './ItemSelectModal';
@@ -36,6 +37,8 @@ interface AutoOrderResultItem {
   status: 'ordered' | 'cart_added' | 'failed' | 'manual_required';
   errorMessage: string | null;
   checkoutSuccess?: boolean;
+  screenshotUrl?: string | null;
+  screenshotExpiresAt?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +47,7 @@ interface AutoOrderResultItem {
 
 function formatCurrency(value: number | null | undefined): string {
   if (value == null) return '-';
-  return `¥${value.toLocaleString()}`;
+  return `\u00a5${value.toLocaleString()}`;
 }
 
 function groupBySupplier(
@@ -64,6 +67,16 @@ function groupBySupplier(
   return map;
 }
 
+// Group results by supplier
+function groupResultsBySupplier(results: AutoOrderResultItem[]) {
+  const map = new Map<string, AutoOrderResultItem[]>();
+  for (const r of results) {
+    if (!map.has(r.supplierName)) map.set(r.supplierName, []);
+    map.get(r.supplierName)!.push(r);
+  }
+  return map;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -76,6 +89,8 @@ export function AdhocOrderForm() {
   const [autoResults, setAutoResults] = useState<AutoOrderResultItem[]>([]);
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [lastAutoConfirm, setLastAutoConfirm] = useState(false);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [orderHistoryIds, setOrderHistoryIds] = useState<string[]>([]);
 
   // ---- Item selection -------------------------------------------------------
 
@@ -128,12 +143,10 @@ export function AdhocOrderForm() {
       if (!validate()) return;
 
       if (autoConfirm) {
-        // Show confirmation dialog for "注文確定まで実行"
         setConfirmDialogOpen(true);
         return;
       }
 
-      // For cart-only, simple confirm
       const grouped = groupBySupplier(lines);
       const supplierList = Array.from(grouped.values());
       const autoSuppliers = supplierList
@@ -175,6 +188,7 @@ export function AdhocOrderForm() {
         }
 
         const data = await res.json();
+        setOrderHistoryIds(data.orderIds ?? []);
 
         if (executeAutoOrder && data.autoOrderResults) {
           setAutoResults(data.autoOrderResults);
@@ -202,6 +216,59 @@ export function AdhocOrderForm() {
       }
     },
     [lines],
+  );
+
+  // ---- Confirm (2nd step) ---------------------------------------------------
+
+  const handleConfirmOrder = useCallback(
+    async (supplierName: string) => {
+      if (!confirm(`${supplierName} の注文を確定しますか？`)) return;
+
+      setConfirming(supplierName);
+      try {
+        const idempotencyKey = crypto.randomUUID();
+        const res = await fetch('/api/orders/confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            supplierName,
+            orderHistoryIds,
+            idempotencyKey,
+          }),
+        });
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error ?? `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        // Update results
+        setAutoResults((prev) =>
+          prev.map((r) => {
+            if (r.supplierName !== supplierName) return r;
+            return {
+              ...r,
+              status: data.status === 'ordered' ? 'ordered' : r.status,
+              screenshotUrl: data.screenshotUrl ?? r.screenshotUrl,
+              screenshotExpiresAt: data.screenshotExpiresAt ?? r.screenshotExpiresAt,
+            };
+          }),
+        );
+
+        if (data.success) {
+          showToast(`${supplierName}: 注文が確定しました`, 'success');
+        } else {
+          showToast(`${supplierName}: 注文確定に失敗しました`, 'error');
+        }
+      } catch (e: any) {
+        showToast(e.message ?? 'エラーが発生しました', 'error');
+      } finally {
+        setConfirming(null);
+      }
+    },
+    [orderHistoryIds],
   );
 
   // ---- Computed values ------------------------------------------------------
@@ -242,37 +309,76 @@ export function AdhocOrderForm() {
                 autoResults.some((r) => r.status === 'cart_added') && (
                   <div className="mb-3 flex items-start gap-2 rounded-md bg-blue-50 p-3 text-sm text-blue-800">
                     <CheckCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                    <span>カートに投入しました。ブラウザでカート内容を確認し、注文を確定してください。</span>
+                    <span>カートに投入しました。スクリーンショットを確認し、「注文を確定する」を押してください。</span>
                   </div>
                 )
               )}
 
-              <div className="space-y-1">
-                {autoResults.map((r) => (
-                  <div
-                    key={r.itemId}
-                    className="flex items-center gap-2 text-sm"
-                  >
-                    {r.status === 'ordered' ? (
-                      <CheckCircle className="h-4 w-4 text-green-600" />
-                    ) : r.status === 'cart_added' ? (
-                      <CheckCircle className="h-4 w-4 text-blue-600" />
-                    ) : (
-                      <AlertTriangle className="h-4 w-4 text-yellow-600" />
-                    )}
-                    <span className="text-gray-700">{r.supplierName}</span>
-                    <span className="text-gray-500">
-                      {r.status === 'ordered'
-                        ? '注文確定済'
-                        : r.status === 'cart_added'
-                          ? 'カート投入済'
-                          : r.status === 'manual_required'
-                            ? '手動発注が必要です'
-                            : `失敗: ${r.errorMessage ?? ''}`}
-                    </span>
-                  </div>
-                ))}
-              </div>
+              {/* Results grouped by supplier */}
+              {Array.from(groupResultsBySupplier(autoResults).entries()).map(
+                ([supplierName, results]) => {
+                  const screenshotUrl = results[0]?.screenshotUrl;
+                  const hasCartItems = results.some((r) => r.status === 'cart_added');
+
+                  return (
+                    <div key={supplierName} className="mb-4 rounded border bg-gray-50 p-3">
+                      <div className="mb-2 font-medium text-gray-900">{supplierName}</div>
+
+                      <div className="space-y-1">
+                        {results.map((r) => (
+                          <div key={r.itemId} className="flex items-center gap-2 text-sm">
+                            {r.status === 'ordered' ? (
+                              <CheckCircle className="h-4 w-4 text-green-600" />
+                            ) : r.status === 'cart_added' ? (
+                              <CheckCircle className="h-4 w-4 text-blue-600" />
+                            ) : (
+                              <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                            )}
+                            <span className="text-gray-500">
+                              {r.status === 'ordered'
+                                ? '注文確定済'
+                                : r.status === 'cart_added'
+                                  ? 'カート投入済'
+                                  : r.status === 'manual_required'
+                                    ? '手動発注が必要です'
+                                    : `失敗: ${r.errorMessage ?? ''}`}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Screenshot */}
+                      {screenshotUrl && (
+                        <div className="mt-3">
+                          <div className="mb-1 flex items-center gap-1 text-xs text-gray-500">
+                            <Image className="h-3 w-3" />
+                            カートのスクリーンショット
+                          </div>
+                          <img
+                            src={screenshotUrl}
+                            alt={`${supplierName} cart screenshot`}
+                            className="max-h-64 rounded border object-contain"
+                          />
+                        </div>
+                      )}
+
+                      {/* Confirm button (2nd step) */}
+                      {!lastAutoConfirm && hasCartItems && (
+                        <div className="mt-3">
+                          <button
+                            onClick={() => handleConfirmOrder(supplierName)}
+                            disabled={confirming === supplierName}
+                            className="inline-flex items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
+                          >
+                            <Zap className="h-4 w-4" />
+                            {confirming === supplierName ? '確定中...' : '注文を確定する'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                },
+              )}
             </div>
           )}
           <div className="flex items-center gap-4">
@@ -287,6 +393,7 @@ export function AdhocOrderForm() {
                 setOrderComplete(false);
                 setAutoResults([]);
                 setLastAutoConfirm(false);
+                setOrderHistoryIds([]);
               }}
               className="text-sm font-medium text-gray-600 hover:text-gray-800"
             >
@@ -314,16 +421,12 @@ export function AdhocOrderForm() {
             <div className="space-y-4">
               {Array.from(grouped.entries()).map(([supplierId, group]) => {
                 const subtotal = group.lines.reduce((sum, l) => {
-                  const qty =
-                    typeof l.quantity === 'number' ? l.quantity : 0;
+                  const qty = typeof l.quantity === 'number' ? l.quantity : 0;
                   return sum + qty * (l.item.unit_price ?? 0);
                 }, 0);
 
                 return (
-                  <div
-                    key={supplierId}
-                    className="rounded-lg border bg-white shadow-sm"
-                  >
+                  <div key={supplierId} className="rounded-lg border bg-white shadow-sm">
                     <div className="border-b bg-gray-50 px-4 py-2 text-sm font-bold text-gray-800">
                       {group.supplier.name}
                       {group.supplier.auto_order_supported && (
@@ -337,117 +440,38 @@ export function AdhocOrderForm() {
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b bg-gray-50 text-left text-xs font-medium uppercase text-gray-500">
-                            <th className="px-3 py-2" style={{ width: '15%' }}>
-                              サプライヤー
-                            </th>
-                            <th className="px-3 py-2" style={{ width: '25%' }}>
-                              品目名
-                            </th>
-                            <th className="px-3 py-2" style={{ width: '12%' }}>
-                              規格
-                            </th>
-                            <th
-                              className="px-3 py-2 text-center"
-                              style={{ width: '10%' }}
-                            >
-                              数量
-                            </th>
-                            <th className="px-3 py-2" style={{ width: '8%' }}>
-                              発注単位
-                            </th>
-                            <th
-                              className="px-3 py-2 text-right"
-                              style={{ width: '8%' }}
-                            >
-                              単価
-                            </th>
-                            <th
-                              className="px-3 py-2 text-right"
-                              style={{ width: '10%' }}
-                            >
-                              金額
-                            </th>
-                            <th
-                              className="px-3 py-2 text-center"
-                              style={{ width: '5%' }}
-                            >
-                              削除
-                            </th>
-                            <th
-                              className="px-3 py-2 text-center"
-                              style={{ width: '7%' }}
-                            >
-                              商品URL
-                            </th>
+                            <th className="px-3 py-2" style={{ width: '15%' }}>サプライヤー</th>
+                            <th className="px-3 py-2" style={{ width: '25%' }}>品目名</th>
+                            <th className="px-3 py-2" style={{ width: '12%' }}>規格</th>
+                            <th className="px-3 py-2 text-center" style={{ width: '10%' }}>数量</th>
+                            <th className="px-3 py-2" style={{ width: '8%' }}>発注単位</th>
+                            <th className="px-3 py-2 text-right" style={{ width: '8%' }}>単価</th>
+                            <th className="px-3 py-2 text-right" style={{ width: '10%' }}>金額</th>
+                            <th className="px-3 py-2 text-center" style={{ width: '5%' }}>削除</th>
+                            <th className="px-3 py-2 text-center" style={{ width: '7%' }}>商品URL</th>
                           </tr>
                         </thead>
                         <tbody>
                           {group.lines.map((line) => {
-                            const qty =
-                              typeof line.quantity === 'number'
-                                ? line.quantity
-                                : 0;
-                            const lineAmount =
-                              qty * (line.item.unit_price ?? 0);
-
+                            const qty = typeof line.quantity === 'number' ? line.quantity : 0;
+                            const lineAmount = qty * (line.item.unit_price ?? 0);
                             return (
-                              <tr
-                                key={line.item.id}
-                                className="border-b last:border-b-0 hover:bg-gray-50"
-                              >
-                                <td className="px-3 py-2 text-gray-600">
-                                  {line.item.supplier.name}
-                                </td>
-                                <td className="px-3 py-2 font-medium text-gray-900">
-                                  {line.item.name}
-                                </td>
-                                <td className="px-3 py-2 text-gray-600">
-                                  {line.item.spec ?? '-'}
-                                </td>
+                              <tr key={line.item.id} className="border-b last:border-b-0 hover:bg-gray-50">
+                                <td className="px-3 py-2 text-gray-600">{line.item.supplier.name}</td>
+                                <td className="px-3 py-2 font-medium text-gray-900">{line.item.name}</td>
+                                <td className="px-3 py-2 text-gray-600">{line.item.spec ?? '-'}</td>
                                 <td className="px-3 py-2 text-center">
-                                  <input
-                                    type="number"
-                                    value={line.quantity}
-                                    onChange={(e) =>
-                                      handleQuantityChange(
-                                        line.item.id,
-                                        e.target.value,
-                                      )
-                                    }
-                                    className="w-20 rounded border border-gray-300 bg-yellow-50 px-2 py-0.5 text-center text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                    min={1}
-                                    placeholder="数量"
-                                  />
+                                  <input type="number" value={line.quantity} onChange={(e) => handleQuantityChange(line.item.id, e.target.value)} className="w-20 rounded border border-gray-300 bg-yellow-50 px-2 py-0.5 text-center text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500" min={1} placeholder="数量" />
                                 </td>
-                                <td className="px-3 py-2 text-gray-600">
-                                  {line.item.order_unit ?? '-'}
-                                </td>
-                                <td className="px-3 py-2 text-right text-gray-600">
-                                  {formatCurrency(line.item.unit_price)}
-                                </td>
-                                <td className="px-3 py-2 text-right text-gray-900">
-                                  {formatCurrency(lineAmount)}
-                                </td>
+                                <td className="px-3 py-2 text-gray-600">{line.item.order_unit ?? '-'}</td>
+                                <td className="px-3 py-2 text-right text-gray-600">{formatCurrency(line.item.unit_price)}</td>
+                                <td className="px-3 py-2 text-right text-gray-900">{formatCurrency(lineAmount)}</td>
                                 <td className="px-3 py-2 text-center">
-                                  <button
-                                    onClick={() =>
-                                      handleRemoveLine(line.item.id)
-                                    }
-                                    className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
-                                  >
-                                    <X className="h-4 w-4" />
-                                  </button>
+                                  <button onClick={() => handleRemoveLine(line.item.id)} className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"><X className="h-4 w-4" /></button>
                                 </td>
                                 <td className="px-3 py-2 text-center">
                                   {line.item.product_url ? (
-                                    <a
-                                      href={line.item.product_url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex text-blue-600 hover:text-blue-800"
-                                    >
-                                      <ExternalLink className="h-4 w-4" />
-                                    </a>
+                                    <a href={line.item.product_url} target="_blank" rel="noopener noreferrer" className="inline-flex text-blue-600 hover:text-blue-800"><ExternalLink className="h-4 w-4" /></a>
                                   ) : (
                                     <span className="text-gray-300">-</span>
                                   )}
@@ -455,18 +479,9 @@ export function AdhocOrderForm() {
                               </tr>
                             );
                           })}
-
-                          {/* Subtotal row */}
                           <tr className="border-t bg-gray-50 font-medium">
-                            <td
-                              colSpan={6}
-                              className="px-3 py-2 text-right text-gray-700"
-                            >
-                              {group.supplier.name} 小計
-                            </td>
-                            <td className="px-3 py-2 text-right text-gray-900">
-                              {formatCurrency(subtotal)}
-                            </td>
+                            <td colSpan={6} className="px-3 py-2 text-right text-gray-700">{group.supplier.name} 小計</td>
+                            <td className="px-3 py-2 text-right text-gray-900">{formatCurrency(subtotal)}</td>
                             <td colSpan={2} />
                           </tr>
                         </tbody>
@@ -476,7 +491,6 @@ export function AdhocOrderForm() {
                 );
               })}
 
-              {/* Grand total */}
               <div className="rounded-lg border bg-white p-4 shadow-sm">
                 <div className="flex justify-between text-base font-bold text-gray-900">
                   <span>合計</span>
@@ -484,29 +498,16 @@ export function AdhocOrderForm() {
                 </div>
               </div>
 
-              {/* Action buttons */}
               <div className="flex items-center gap-4">
-                <button
-                  onClick={() => executeSubmit(false, false)}
-                  disabled={submitting}
-                  className="inline-flex items-center gap-2 rounded-md bg-gray-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-gray-700 disabled:opacity-50"
-                >
+                <button onClick={() => executeSubmit(false, false)} disabled={submitting} className="inline-flex items-center gap-2 rounded-md bg-gray-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-gray-700 disabled:opacity-50">
                   <Save className="h-4 w-4" />
                   {submitting ? '保存中...' : '記録のみ保存'}
                 </button>
-                <button
-                  onClick={() => handleAutoOrderClick(false)}
-                  disabled={submitting}
-                  className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-                >
+                <button onClick={() => handleAutoOrderClick(false)} disabled={submitting} className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50">
                   <ShoppingCart className="h-4 w-4" />
                   {submitting ? '実行中...' : 'カートに投入のみ'}
                 </button>
-                <button
-                  onClick={() => handleAutoOrderClick(true)}
-                  disabled={submitting}
-                  className="inline-flex items-center gap-2 rounded-md bg-red-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
-                >
+                <button onClick={() => handleAutoOrderClick(true)} disabled={submitting} className="inline-flex items-center gap-2 rounded-md bg-red-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50">
                   <Zap className="h-4 w-4" />
                   {submitting ? '実行中...' : '注文確定まで実行'}
                 </button>
@@ -535,51 +536,34 @@ export function AdhocOrderForm() {
             <p className="mb-4 text-sm text-gray-700">
               以下の内容で発注してよろしいですか？注文が確定され、取り消しできません。
             </p>
-
             <div className="mb-4 space-y-2">
               {Array.from(grouped.entries()).map(([supplierId, group]) => {
                 const subtotal = group.lines.reduce((sum, l) => {
                   const qty = typeof l.quantity === 'number' ? l.quantity : 0;
                   return sum + qty * (l.item.unit_price ?? 0);
                 }, 0);
-
                 return (
                   <div key={supplierId} className="rounded border bg-gray-50 p-3 text-sm">
                     <div className="flex justify-between font-medium text-gray-900">
                       <span>{group.supplier.name}</span>
                       <span>{group.lines.length} 品目</span>
                     </div>
-                    <div className="mt-1 text-right text-gray-600">
-                      合計: {formatCurrency(subtotal)}
-                    </div>
+                    <div className="mt-1 text-right text-gray-600">合計: {formatCurrency(subtotal)}</div>
                   </div>
                 );
               })}
             </div>
-
             <div className="rounded border bg-yellow-50 p-3 text-sm font-bold text-gray-900">
               総合計: {formatCurrency(grandTotal)}
             </div>
-
             <div className="mt-6 flex justify-end gap-3">
-              <button
-                onClick={() => setConfirmDialogOpen(false)}
-                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-              >
-                キャンセル
-              </button>
-              <button
-                onClick={() => executeSubmit(true, true)}
-                className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700"
-              >
-                注文を確定する
-              </button>
+              <button onClick={() => setConfirmDialogOpen(false)} className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50">キャンセル</button>
+              <button onClick={() => executeSubmit(true, true)} className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700">注文を確定する</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Item select modal */}
       <ItemSelectModal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}

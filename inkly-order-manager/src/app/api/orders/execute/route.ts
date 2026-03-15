@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getAutoOrderModule } from '@/lib/auto-order';
 import { decryptCredentials } from '@/lib/utils/encryption';
+import { uploadScreenshot } from '@/lib/utils/screenshot-uploader';
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,7 +18,6 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createServerSupabaseClient();
 
-    // Get final quantities from ord_monthly_orders with item details
     const { data: monthlyOrders, error: ordersError } = await supabase
       .from('ord_monthly_orders')
       .select('*, item:ord_items!item_id(*, supplier:ord_suppliers!supplier_id(*))')
@@ -38,7 +38,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get supplier credentials
     const { data: supplier, error: supplierError } = await supabase
       .from('ord_suppliers')
       .select('*')
@@ -62,7 +61,6 @@ export async function POST(request: NextRequest) {
     const decrypted = decryptCredentials(supplier.credentials_encrypted);
     const credentials: { username: string; password: string } = JSON.parse(decrypted);
 
-    // Prepare items for auto-order
     const orderItems = monthlyOrders.map((order: any) => ({
       itemId: order.item_id,
       name: order.item?.name ?? '',
@@ -72,7 +70,6 @@ export async function POST(request: NextRequest) {
       unitPrice: order.item?.unit_price ?? 0,
     }));
 
-    // Execute auto-order
     const autoOrder = getAutoOrderModule(supplierName);
     if (!autoOrder) {
       return NextResponse.json(
@@ -80,11 +77,22 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    const { results, checkoutSuccess, cartUrl } = await autoOrder.executeOrder(
+    const { results, checkoutSuccess, cartUrl, screenshotPath } = await autoOrder.executeOrder(
       credentials,
       orderItems,
       autoConfirm ?? false,
     );
+
+    // Upload screenshot
+    let screenshotUrl: string | null = null;
+    let screenshotExpiresAt: string | null = null;
+    if (screenshotPath) {
+      const uploaded = await uploadScreenshot(screenshotPath);
+      if (uploaded) {
+        screenshotUrl = uploaded.signedUrl;
+        screenshotExpiresAt = uploaded.expiresAt;
+      }
+    }
 
     // Insert results into ord_order_history
     const historyRecords = results.map((result: any) => {
@@ -115,7 +123,6 @@ export async function POST(request: NextRequest) {
       console.error('Failed to insert order history:', historyError);
     }
 
-    // Update ord_monthly_orders order_status
     const newStatus = checkoutSuccess ? 'ordered' : 'confirmed';
     const { error: updateError } = await supabase
       .from('ord_monthly_orders')
@@ -134,6 +141,8 @@ export async function POST(request: NextRequest) {
       checkoutSuccess,
       cartUrl,
       results,
+      screenshotUrl,
+      screenshotExpiresAt,
     });
   } catch (error) {
     console.error('Order execution error:', error);
