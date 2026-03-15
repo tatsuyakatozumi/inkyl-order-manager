@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getAutoOrderModule } from '@/lib/auto-order';
 import { decryptCredentials } from '@/lib/utils/encryption';
@@ -8,6 +8,11 @@ interface AdhocItem {
   itemId: string;
   quantity: number;
   unitPrice: number;
+}
+
+function normalizeRel<T>(value: T | T[] | null | undefined): T | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
 }
 
 export async function POST(request: NextRequest) {
@@ -27,12 +32,14 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createServerSupabaseClient();
 
-    // Fetch item details with supplier info
     const itemIds = items.map((i) => i.itemId);
     const { data: dbItems, error: itemsError } = await supabase
       .from('ord_items')
-      .select('*, supplier:ord_suppliers!supplier_id(*)')
-      .in('id', itemIds);
+      .select(
+        'id,name,supplier_id,product_url,supplier_product_code,unit_price,supplier:ord_suppliers!supplier_id(id,name,auto_order_supported,credentials_encrypted)',
+      )
+      .in('id', itemIds)
+      .limit(5000);
 
     if (itemsError) {
       return NextResponse.json(
@@ -48,10 +55,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Build lookup map
     const itemMap = new Map(dbItems.map((i: any) => [i.id, i]));
 
-    // Insert all items into ord_order_history
     const orderDate = new Date().toISOString().split('T')[0];
     const historyRecords = items.map((reqItem) => {
       const dbItem = itemMap.get(reqItem.itemId) as any;
@@ -75,7 +80,7 @@ export async function POST(request: NextRequest) {
     const { data: insertedOrders, error: historyError } = await supabase
       .from('ord_order_history')
       .insert(historyRecords)
-      .select('id, item_id');
+      .select('id,item_id');
 
     if (historyError) {
       return NextResponse.json(
@@ -86,7 +91,6 @@ export async function POST(request: NextRequest) {
 
     const orderIds = insertedOrders?.map((o: any) => o.id) ?? [];
 
-    // If not auto-ordering, just return
     if (!executeAutoOrder) {
       return NextResponse.json({
         success: true,
@@ -95,7 +99,6 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Group items by supplier for auto-ordering
     const supplierGroups = new Map<
       string,
       { supplier: any; orderItems: any[]; historyIds: string[] }
@@ -106,8 +109,10 @@ export async function POST(request: NextRequest) {
       if (!dbItem) continue;
       const supplierId = dbItem.supplier_id;
       if (!supplierGroups.has(supplierId)) {
+        const supplier = normalizeRel(dbItem.supplier);
+        if (!supplier) continue;
         supplierGroups.set(supplierId, {
-          supplier: dbItem.supplier,
+          supplier,
           orderItems: [],
           historyIds: [],
         });
@@ -132,7 +137,6 @@ export async function POST(request: NextRequest) {
     for (const [, group] of supplierGroups) {
       const supplier = group.supplier;
 
-      // Check if auto-order is supported
       if (!supplier.auto_order_supported) {
         for (const item of group.orderItems) {
           autoOrderResults.push({
@@ -146,7 +150,6 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      // Try auto-order
       const autoOrder = getAutoOrderModule(supplier.name);
       if (!autoOrder || !supplier.credentials_encrypted) {
         for (const item of group.orderItems) {
@@ -170,17 +173,14 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        console.log('[Adhoc] executing auto order for supplier:', supplier.name);
         const decrypted = decryptCredentials(supplier.credentials_encrypted);
         const credentials: { username: string; password: string } = JSON.parse(decrypted);
-        console.log('[Adhoc] items to order:', group.orderItems.length, 'autoConfirm:', autoConfirm ?? false);
         const { results, checkoutSuccess, cartUrl, screenshotPath } = await autoOrder.executeOrder(
           credentials,
           group.orderItems,
           autoConfirm ?? false,
         );
 
-        // Upload screenshot to Supabase Storage
         let screenshotUrl: string | null = null;
         let screenshotExpiresAt: string | null = null;
         if (screenshotPath) {
@@ -191,7 +191,6 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        console.log('[Adhoc] auto order complete, checkoutSuccess:', checkoutSuccess);
         for (const result of results) {
           autoOrderResults.push({
             itemId: result.itemId,
@@ -205,7 +204,6 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        // Update history statuses
         for (const result of results) {
           const historyRecord = insertedOrders?.find(
             (o: any) => o.item_id === result.itemId,

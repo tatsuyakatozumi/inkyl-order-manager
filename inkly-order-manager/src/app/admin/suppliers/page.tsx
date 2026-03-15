@@ -1,37 +1,39 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+﻿import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { SuppliersTable } from '@/components/suppliers/SuppliersTable';
 
 export default async function SuppliersPage() {
   const supabase = await createServerSupabaseClient();
 
-  // Fetch suppliers
   const { data: suppliers, error: suppliersError } = await supabase
     .from('ord_suppliers')
-    .select('*')
-    .order('name');
+    .select(
+      'id,name,order_cycle,auto_order_supported,login_url,credentials_encrypted,lead_time_days,notes,is_active,created_at,updated_at',
+    )
+    .order('name')
+    .limit(300);
 
   if (suppliersError) {
     return (
-      <div className="text-red-600">
-        サプライヤーの取得に失敗しました: {suppliersError.message}
+      <div className="text-sm text-red-600">
+        Failed to fetch suppliers: {suppliersError.message}
       </div>
     );
   }
 
-  // Fetch item counts per supplier
   const { data: itemCounts, error: itemCountsError } = await supabase
     .from('ord_items')
-    .select('supplier_id');
+    .select('supplier_id')
+    .eq('is_active', true)
+    .limit(5000);
 
   if (itemCountsError) {
     return (
-      <div className="text-red-600">
-        品目数の取得に失敗しました: {itemCountsError.message}
+      <div className="text-sm text-red-600">
+        Failed to fetch item counts: {itemCountsError.message}
       </div>
     );
   }
 
-  // Build a map of supplier_id -> item count
   const countMap: Record<string, number> = {};
   for (const row of itemCounts ?? []) {
     countMap[row.supplier_id] = (countMap[row.supplier_id] ?? 0) + 1;
@@ -44,7 +46,7 @@ export default async function SuppliersPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">サプライヤー管理</h1>
+      <h1 className="mb-6 text-xl font-bold md:text-2xl">Suppliers</h1>
       <SuppliersTable suppliers={suppliersWithCount} />
     </div>
   );

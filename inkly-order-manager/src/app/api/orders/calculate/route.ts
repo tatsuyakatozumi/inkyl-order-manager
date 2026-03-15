@@ -1,6 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { calculateOrderQuantity } from '@/lib/utils/order-calculator';
+
+const BATCH_SIZE = 50;
+
+function normalizeSupplier<T>(supplier: T | T[] | null | undefined): T | null {
+  if (Array.isArray(supplier)) return supplier[0] ?? null;
+  return supplier ?? null;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,47 +22,52 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createServerSupabaseClient();
 
-    // Get active consumable items that belong to monthly-cycle suppliers
     const { data: items, error: itemsError } = await supabase
       .from('ord_items')
-      .select('*, supplier:ord_suppliers!supplier_id(*)')
+      .select(
+        'id,name,supplier_id,spec,unit_price,order_unit_quantity,consumption_per_visit,is_visitor_linked,fixed_monthly_consumption,product_url,supplier_product_code,supplier:ord_suppliers!supplier_id(id,name,order_cycle)',
+      )
       .eq('consumable_type', 'consumable')
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .limit(5000);
 
     if (itemsError) {
       return NextResponse.json({ error: itemsError.message }, { status: 500 });
     }
 
-    // Filter to only items whose supplier has order_cycle = 'monthly'
-    const monthlyItems = (items ?? []).filter(
-      (item: any) => item.supplier?.order_cycle === 'monthly',
-    );
+    const monthlyItems = (items ?? []).filter((item: any) => {
+      const supplier = normalizeSupplier(item.supplier);
+      return supplier?.order_cycle === 'monthly';
+    });
 
-    // Get latest inventory snapshots for all relevant item IDs
     const itemIds = monthlyItems.map((item: any) => item.id);
 
-    const { data: snapshots, error: snapshotsError } = await supabase
-      .from('ord_inventory_snapshots')
-      .select('*')
-      .in('item_id', itemIds)
-      .order('snapshot_date', { ascending: false });
+    let snapshots: Array<{ item_id: string; quantity: number; snapshot_date: string }> = [];
+    if (itemIds.length > 0) {
+      const { data: snapshotRows, error: snapshotsError } = await supabase
+        .from('ord_inventory_snapshots')
+        .select('item_id,quantity,snapshot_date')
+        .in('item_id', itemIds)
+        .order('snapshot_date', { ascending: false })
+        .limit(10000);
 
-    if (snapshotsError) {
-      return NextResponse.json(
-        { error: snapshotsError.message },
-        { status: 500 },
-      );
+      if (snapshotsError) {
+        return NextResponse.json(
+          { error: snapshotsError.message },
+          { status: 500 },
+        );
+      }
+
+      snapshots = snapshotRows ?? [];
     }
 
-    // Build a map of item_id -> latest inventory quantity
     const latestInventory = new Map<string, number>();
-    for (const snap of snapshots ?? []) {
+    for (const snap of snapshots) {
       if (!latestInventory.has(snap.item_id)) {
         latestInventory.set(snap.item_id, snap.quantity);
       }
     }
 
-    // Calculate order quantities and prepare upsert records
     const upsertRecords: any[] = [];
     const calculatedOrders: any[] = [];
 
@@ -87,25 +99,29 @@ export async function POST(request: NextRequest) {
       upsertRecords.push(record);
       calculatedOrders.push({
         ...record,
-        item,
-        supplier: item.supplier,
+        item: {
+          ...item,
+          supplier: normalizeSupplier(item.supplier),
+        },
         calculation: result,
       });
     }
 
-    // Upsert into ord_monthly_orders (unique on year_month + item_id)
     if (upsertRecords.length > 0) {
-      const { error: upsertError } = await supabase
-        .from('ord_monthly_orders')
-        .upsert(upsertRecords, {
-          onConflict: 'year_month,item_id',
-        });
+      for (let i = 0; i < upsertRecords.length; i += BATCH_SIZE) {
+        const chunk = upsertRecords.slice(i, i + BATCH_SIZE);
+        const { error: upsertError } = await supabase
+          .from('ord_monthly_orders')
+          .upsert(chunk, {
+            onConflict: 'year_month,item_id',
+          });
 
-      if (upsertError) {
-        return NextResponse.json(
-          { error: upsertError.message },
-          { status: 500 },
-        );
+        if (upsertError) {
+          return NextResponse.json(
+            { error: upsertError.message },
+            { status: 500 },
+          );
+        }
       }
     }
 

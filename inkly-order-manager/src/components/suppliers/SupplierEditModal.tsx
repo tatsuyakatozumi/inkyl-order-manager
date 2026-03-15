@@ -79,8 +79,8 @@ export function SupplierEditModal({ supplier, onClose }: SupplierEditModalProps)
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-lg rounded-lg bg-white shadow-xl">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 md:items-center">
+      <div className="h-full w-full overflow-y-auto bg-white shadow-xl md:h-auto md:max-h-[90vh] md:max-w-lg md:rounded-lg">
         {/* Header */}
         <div className="flex items-center justify-between border-b px-6 py-4">
           <h2 className="text-lg font-bold text-gray-900">
@@ -88,7 +88,7 @@ export function SupplierEditModal({ supplier, onClose }: SupplierEditModalProps)
           </h2>
           <button
             onClick={onClose}
-            className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
+            className="min-h-[44px] min-w-[44px] rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
           >
             <X className="h-5 w-5" />
           </button>
@@ -111,7 +111,7 @@ export function SupplierEditModal({ supplier, onClose }: SupplierEditModalProps)
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
 
@@ -125,7 +125,7 @@ export function SupplierEditModal({ supplier, onClose }: SupplierEditModalProps)
               onChange={(e) =>
                 setOrderCycle(e.target.value as 'monthly' | 'irregular')
               }
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
               <option value="monthly">月次</option>
               <option value="irregular">不定期</option>
@@ -165,7 +165,7 @@ export function SupplierEditModal({ supplier, onClose }: SupplierEditModalProps)
               onChange={(e) => setLoginId(e.target.value)}
               placeholder={credentialsLoaded ? '' : '読み込み中...'}
               disabled={!credentialsLoaded}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+              className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
             />
             {hasExistingCredentials && credentialsLoaded && !loginId && (
               <p className="mt-1 text-xs text-gray-400">設定済み。変更する場合は再入力してください</p>
@@ -184,12 +184,12 @@ export function SupplierEditModal({ supplier, onClose }: SupplierEditModalProps)
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={credentialsLoaded ? '' : '読み込み中...'}
                 disabled={!credentialsLoaded}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 pr-10 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+                className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 pr-10 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-gray-400 hover:text-gray-600"
+                className="absolute right-2 top-1/2 min-h-[36px] min-w-[36px] -translate-y-1/2 rounded p-1 text-gray-400 hover:text-gray-600"
                 tabIndex={-1}
               >
                 {showPassword ? (
@@ -214,7 +214,7 @@ export function SupplierEditModal({ supplier, onClose }: SupplierEditModalProps)
               min={0}
               value={leadTimeDays}
               onChange={(e) => setLeadTimeDays(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
 
@@ -227,7 +227,7 @@ export function SupplierEditModal({ supplier, onClose }: SupplierEditModalProps)
               rows={3}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
           </div>
         </div>
@@ -237,14 +237,14 @@ export function SupplierEditModal({ supplier, onClose }: SupplierEditModalProps)
           <button
             onClick={onClose}
             disabled={isPending}
-            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors disabled:opacity-50"
+            className="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50"
           >
             キャンセル
           </button>
           <button
             onClick={handleSave}
             disabled={isPending}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 transition-colors disabled:opacity-50"
+            className="min-h-[44px] rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:opacity-50"
           >
             {isPending ? '保存中...' : '保存'}
           </button>

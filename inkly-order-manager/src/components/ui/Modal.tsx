@@ -9,6 +9,7 @@ interface ModalProps {
   title: string
   children: React.ReactNode
   size?: 'sm' | 'md' | 'lg' | 'xl'
+  mobileFullscreen?: boolean
 }
 
 const sizeClasses = {
@@ -18,7 +19,14 @@ const sizeClasses = {
   xl: 'max-w-4xl',
 }
 
-export function Modal({ isOpen, onClose, title, children, size = 'lg' }: ModalProps) {
+export function Modal({
+  isOpen,
+  onClose,
+  title,
+  children,
+  size = 'lg',
+  mobileFullscreen = false,
+}: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -45,17 +53,23 @@ export function Modal({ isOpen, onClose, title, children, size = 'lg' }: ModalPr
         if (e.target === overlayRef.current) onClose()
       }}
     >
-      <div className={`${sizeClasses[size]} w-full mx-4 max-h-[90vh] overflow-y-auto rounded-lg bg-white shadow-xl`}>
-        <div className="flex items-center justify-between border-b px-6 py-4">
+      <div
+        className={`${
+          mobileFullscreen
+            ? 'h-full w-full overflow-y-auto bg-white md:h-auto md:max-h-[90vh] md:rounded-lg'
+            : 'mx-4 w-full max-h-[90vh] overflow-y-auto rounded-lg bg-white'
+        } ${sizeClasses[size]} shadow-xl`}
+      >
+        <div className="flex items-center justify-between border-b px-4 py-3 md:px-6 md:py-4">
           <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
           <button
             onClick={onClose}
-            className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            className="min-h-[44px] min-w-[44px] rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="px-6 py-4">{children}</div>
+        <div className="px-4 py-3 md:px-6 md:py-4">{children}</div>
       </div>
     </div>
   )

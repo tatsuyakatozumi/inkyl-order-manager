@@ -27,7 +27,7 @@ export async function updateOrderAdjustment(
   // First get the current order to recalculate final_quantity
   const { data: order, error: fetchError } = await supabase
     .from('ord_monthly_orders')
-    .select('*')
+    .select('id,calculated_quantity')
     .eq('id', orderId)
     .single();
 

@@ -1,29 +1,29 @@
-'use client';
+﻿'use client';
 
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
-import type { StockAlertWithItem, AlertType } from '@/types/database';
+
+type AlertType = 'low_stock' | 'out_of_stock' | 'ordered';
+
+type AlertRow = {
+  id: string;
+  alert_type: AlertType;
+  raw_message: string;
+  parsed_item_name: string | null;
+  parsed_quantity: number | null;
+  slack_user_id: string | null;
+  reported_at: string;
+  item: { id: string; name: string } | null;
+};
 
 interface AlertsListProps {
-  alerts: StockAlertWithItem[];
+  alerts: AlertRow[];
 }
 
-const ALERT_TYPE_CONFIG: Record<
-  AlertType,
-  { label: string; className: string }
-> = {
-  low_stock: {
-    label: '残少',
-    className: 'bg-yellow-100 text-yellow-800',
-  },
-  out_of_stock: {
-    label: '切れ',
-    className: 'bg-red-100 text-red-800',
-  },
-  ordered: {
-    label: '発注済',
-    className: 'bg-green-100 text-green-800',
-  },
+const ALERT_TYPE_CONFIG: Record<AlertType, { label: string; className: string }> = {
+  low_stock: { label: 'Low', className: 'bg-yellow-100 text-yellow-800' },
+  out_of_stock: { label: 'Out', className: 'bg-red-100 text-red-800' },
+  ordered: { label: 'Ordered', className: 'bg-green-100 text-green-800' },
 };
 
 const PAGE_SIZE = 50;
@@ -68,22 +68,19 @@ export function AlertsList({ alerts }: AlertsListProps) {
 
   return (
     <div className="space-y-4">
-      {/* Filter buttons */}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <AlertTriangle className="h-5 w-5 text-gray-500" />
-        <span className="text-sm font-medium text-gray-700">絞り込み:</span>
-        {(
-          [
-            { key: 'all', label: 'すべて' },
-            { key: 'low_stock', label: '残少' },
-            { key: 'out_of_stock', label: '切れ' },
-            { key: 'ordered', label: '発注済' },
-          ] as const
-        ).map(({ key, label }) => (
+        <span className="text-sm font-medium text-gray-700">Filter:</span>
+        {([
+          { key: 'all', label: 'All' },
+          { key: 'low_stock', label: 'Low' },
+          { key: 'out_of_stock', label: 'Out' },
+          { key: 'ordered', label: 'Ordered' },
+        ] as const).map(({ key, label }) => (
           <button
             key={key}
             onClick={() => handleFilterChange(key)}
-            className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
+            className={`min-h-[44px] rounded-full px-3 py-1 text-sm font-medium transition-colors ${
               filterType === key
                 ? 'bg-gray-800 text-white'
                 : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
@@ -92,96 +89,58 @@ export function AlertsList({ alerts }: AlertsListProps) {
             {label}
           </button>
         ))}
-        <span className="ml-auto text-sm text-gray-500">
-          {filtered.length} 件
-        </span>
+        <span className="ml-auto text-sm text-gray-500">{filtered.length} rows</span>
       </div>
 
-      {/* Table */}
       <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
+        <table className="w-full min-w-[980px] divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                報告日時
-              </th>
-              <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                種別
-              </th>
-              <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                品目名
-              </th>
-              <th className="px-4 py-3 text-right font-semibold text-gray-700">
-                数量
-              </th>
-              <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                元メッセージ
-              </th>
-              <th className="px-4 py-3 text-left font-semibold text-gray-700">
-                Slackユーザー
-              </th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Reported At</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Type</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Item</th>
+              <th className="px-4 py-3 text-right font-semibold text-gray-700">Qty</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Message</th>
+              <th className="px-4 py-3 text-left font-semibold text-gray-700">Slack User</th>
               <th className="w-10 px-2 py-3" />
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {paginated.length === 0 && (
               <tr>
-                <td
-                  colSpan={7}
-                  className="px-4 py-8 text-center text-gray-400"
-                >
-                  該当する報告がありません
+                <td colSpan={7} className="px-4 py-8 text-center text-gray-400">
+                  No alerts found.
                 </td>
               </tr>
             )}
             {paginated.map((alert) => {
               const config = ALERT_TYPE_CONFIG[alert.alert_type];
-              const itemName =
-                alert.item?.name ?? alert.parsed_item_name ?? '-';
+              const itemName = alert.item?.name ?? alert.parsed_item_name ?? '-';
               const isExpanded = expandedId === alert.id;
 
               return (
-                <tr
-                  key={alert.id}
-                  className="hover:bg-gray-50 transition-colors group"
-                >
-                  <td className="px-4 py-3 whitespace-nowrap text-gray-600">
-                    {formatDate(alert.reported_at)}
-                  </td>
+                <tr key={alert.id} className="group transition-colors hover:bg-gray-50">
+                  <td className="whitespace-nowrap px-4 py-3 text-gray-600">{formatDate(alert.reported_at)}</td>
                   <td className="px-4 py-3">
-                    <span
-                      className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${config.className}`}
-                    >
+                    <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${config.className}`}>
                       {config.label}
                     </span>
                   </td>
-                  <td className="px-4 py-3 font-medium text-gray-900">
-                    {itemName}
-                  </td>
+                  <td className="px-4 py-3 font-medium text-gray-900">{itemName}</td>
                   <td className="px-4 py-3 text-right text-gray-600">
                     {alert.parsed_quantity != null ? alert.parsed_quantity : '-'}
                   </td>
                   <td className="px-4 py-3 text-gray-600">
-                    <div>
-                      {isExpanded
-                        ? alert.raw_message
-                        : truncate(alert.raw_message, 40)}
-                    </div>
+                    {isExpanded ? alert.raw_message : truncate(alert.raw_message, 50)}
                   </td>
-                  <td className="px-4 py-3 text-gray-600">
-                    {alert.slack_user_id ?? '-'}
-                  </td>
+                  <td className="px-4 py-3 text-gray-600">{alert.slack_user_id ?? '-'}</td>
                   <td className="px-2 py-3 text-center">
                     <button
                       onClick={() => toggleExpand(alert.id)}
-                      className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors"
-                      aria-label={isExpanded ? '折りたたむ' : '展開する'}
+                      className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+                      aria-label={isExpanded ? 'Collapse' : 'Expand'}
                     >
-                      {isExpanded ? (
-                        <ChevronUp className="h-4 w-4" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4" />
-                      )}
+                      {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                     </button>
                   </td>
                 </tr>
@@ -191,15 +150,14 @@ export function AlertsList({ alerts }: AlertsListProps) {
         </table>
       </div>
 
-      {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2">
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={page === 1}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="min-h-[44px] rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            前へ
+            Prev
           </button>
           <span className="text-sm text-gray-600">
             {page} / {totalPages}
@@ -207,9 +165,9 @@ export function AlertsList({ alerts }: AlertsListProps) {
           <button
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={page === totalPages}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="min-h-[44px] rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            次へ
+            Next
           </button>
         </div>
       )}

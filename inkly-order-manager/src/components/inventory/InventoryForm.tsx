@@ -1,14 +1,29 @@
-'use client';
+﻿'use client';
 
 import { useState, useCallback } from 'react';
-import type { Item, Supplier } from '@/types/database';
 import { saveInventorySnapshot, getLatestSnapshots } from '@/app/admin/inventory/actions';
 
-type ItemWithSupplier = Item & { supplier: Supplier };
+type InventoryItem = {
+  id: string;
+  name: string;
+  spec: string | null;
+  supplier_id: string;
+  category_large: string;
+  order_unit: string | null;
+  supplier: {
+    id: string;
+    name: string;
+  };
+};
+
+type SupplierOption = {
+  id: string;
+  name: string;
+};
 
 interface InventoryFormProps {
-  items: ItemWithSupplier[];
-  suppliers: Supplier[];
+  items: InventoryItem[];
+  suppliers: SupplierOption[];
   categories: string[];
 }
 
@@ -55,7 +70,7 @@ export default function InventoryForm({ items, suppliers, categories }: Inventor
       }));
 
     if (entries.length === 0) {
-      setMessage({ type: 'error', text: '在庫数量が入力されている行がありません' });
+      setMessage({ type: 'error', text: 'Please enter quantity for at least one item.' });
       return;
     }
 
@@ -63,12 +78,12 @@ export default function InventoryForm({ items, suppliers, categories }: Inventor
     try {
       const result = await saveInventorySnapshot(entries, snapshotDate);
       if (result.success) {
-        setMessage({ type: 'success', text: `${entries.length}件の棚卸しデータを保存しました` });
+        setMessage({ type: 'success', text: `Saved ${entries.length} inventory rows.` });
       } else {
-        setMessage({ type: 'error', text: result.error ?? '保存に失敗しました' });
+        setMessage({ type: 'error', text: result.error ?? 'Failed to save snapshot.' });
       }
     } catch {
-      setMessage({ type: 'error', text: '保存中にエラーが発生しました' });
+      setMessage({ type: 'error', text: 'Unexpected error while saving snapshot.' });
     } finally {
       setSaving(false);
     }
@@ -88,19 +103,20 @@ export default function InventoryForm({ items, suppliers, categories }: Inventor
           };
         }
         setRowData(newRowData);
+
         const dates = Object.values(result.data).map((s) => s.snapshot_date);
         const latestDate = dates.length > 0 ? dates.sort().reverse()[0] : null;
         setMessage({
           type: 'success',
           text: latestDate
-            ? `前回の棚卸しデータ（${latestDate}）を読み込みました`
-            : '前回の棚卸しデータはありません',
+            ? `Loaded previous snapshot (${latestDate}).`
+            : 'No previous snapshot data found.',
         });
       } else {
-        setMessage({ type: 'error', text: result.error ?? '読み込みに失敗しました' });
+        setMessage({ type: 'error', text: result.error ?? 'Failed to load previous snapshots.' });
       }
     } catch {
-      setMessage({ type: 'error', text: '読み込み中にエラーが発生しました' });
+      setMessage({ type: 'error', text: 'Unexpected error while loading snapshots.' });
     } finally {
       setLoading(false);
     }
@@ -108,59 +124,56 @@ export default function InventoryForm({ items, suppliers, categories }: Inventor
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold">棚卸し入力</h1>
-        <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-col items-start justify-between gap-4 md:flex-row md:items-center">
+        <h1 className="text-xl font-bold md:text-2xl">Inventory</h1>
+        <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
           <input
             type="date"
             value={snapshotDate}
             onChange={(e) => setSnapshotDate(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
+            className="min-h-[44px] rounded border border-gray-300 px-3 py-2 text-sm"
           />
           <button
             onClick={handleSave}
             disabled={saving}
-            className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            className="min-h-[44px] rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
-            {saving ? '保存中...' : '保存'}
+            {saving ? 'Saving...' : 'Save'}
           </button>
           <button
             onClick={handleLoadPrevious}
             disabled={loading}
-            className="rounded bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
+            className="min-h-[44px] rounded bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
           >
-            {loading ? '読み込み中...' : '前回の棚卸しデータを読み込む'}
+            {loading ? 'Loading...' : 'Load Previous'}
           </button>
         </div>
       </div>
 
-      {/* Message */}
       {message && (
         <div
           className={`rounded px-4 py-3 text-sm ${
             message.type === 'success'
-              ? 'bg-green-50 text-green-800 border border-green-200'
-              : 'bg-red-50 text-red-800 border border-red-200'
+              ? 'border border-green-200 bg-green-50 text-green-800'
+              : 'border border-red-200 bg-red-50 text-red-800'
           }`}
         >
           {message.text}
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
+        <div className="flex flex-col gap-1 md:flex-row md:items-center md:gap-2">
           <label htmlFor="supplier-filter" className="text-sm font-medium text-gray-700">
-            サプライヤー
+            Supplier
           </label>
           <select
             id="supplier-filter"
             value={selectedSupplier}
             onChange={(e) => setSelectedSupplier(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
+            className="min-h-[44px] rounded border border-gray-300 px-3 py-2 text-sm"
           >
-            <option value="">すべて</option>
+            <option value="">All</option>
             {suppliers.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -168,17 +181,18 @@ export default function InventoryForm({ items, suppliers, categories }: Inventor
             ))}
           </select>
         </div>
-        <div className="flex items-center gap-2">
+
+        <div className="flex flex-col gap-1 md:flex-row md:items-center md:gap-2">
           <label htmlFor="category-filter" className="text-sm font-medium text-gray-700">
-            大分類
+            Category
           </label>
           <select
             id="category-filter"
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2 text-sm"
+            className="min-h-[44px] rounded border border-gray-300 px-3 py-2 text-sm"
           >
-            <option value="">すべて</option>
+            <option value="">All</option>
             {categories.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -188,17 +202,28 @@ export default function InventoryForm({ items, suppliers, categories }: Inventor
         </div>
       </div>
 
-      {/* Table */}
-      <div className="overflow-x-auto rounded border border-gray-200">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded border border-gray-200 bg-white">
+        <table className="w-full min-w-[860px] text-sm">
           <thead>
             <tr className="bg-gray-50 text-left text-gray-600">
-              <th className="px-3 py-2 font-medium" style={{ width: '30%' }}>品目名</th>
-              <th className="px-3 py-2 font-medium" style={{ width: '15%' }}>規格</th>
-              <th className="px-3 py-2 font-medium" style={{ width: '15%' }}>サプライヤー</th>
-              <th className="px-3 py-2 font-medium" style={{ width: '8%' }}>発注単位</th>
-              <th className="px-3 py-2 font-medium" style={{ width: '15%' }}>在庫数量</th>
-              <th className="px-3 py-2 font-medium" style={{ width: '17%' }}>備考</th>
+              <th className="px-3 py-2 font-medium" style={{ width: '30%' }}>
+                Item
+              </th>
+              <th className="px-3 py-2 font-medium" style={{ width: '15%' }}>
+                Spec
+              </th>
+              <th className="px-3 py-2 font-medium" style={{ width: '15%' }}>
+                Supplier
+              </th>
+              <th className="px-3 py-2 font-medium" style={{ width: '8%' }}>
+                Unit
+              </th>
+              <th className="px-3 py-2 font-medium" style={{ width: '15%' }}>
+                Quantity
+              </th>
+              <th className="px-3 py-2 font-medium" style={{ width: '17%' }}>
+                Notes
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -216,7 +241,7 @@ export default function InventoryForm({ items, suppliers, categories }: Inventor
                     value={rowData[item.id]?.quantity ?? ''}
                     onChange={(e) => updateRow(item.id, 'quantity', e.target.value)}
                     tabIndex={index + 1}
-                    className="w-full rounded border border-gray-300 bg-green-50 px-2 py-1.5 text-right focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
+                    className="min-h-[44px] w-full rounded border border-gray-300 bg-green-50 px-2 py-1.5 text-right focus:border-green-500 focus:outline-none focus:ring-1 focus:ring-green-500"
                     placeholder="0"
                   />
                 </td>
@@ -225,7 +250,7 @@ export default function InventoryForm({ items, suppliers, categories }: Inventor
                     type="text"
                     value={rowData[item.id]?.notes ?? ''}
                     onChange={(e) => updateRow(item.id, 'notes', e.target.value)}
-                    className="w-full rounded border border-gray-300 px-2 py-1.5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    className="min-h-[44px] w-full rounded border border-gray-300 px-2 py-1.5 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     placeholder=""
                   />
                 </td>
@@ -234,7 +259,7 @@ export default function InventoryForm({ items, suppliers, categories }: Inventor
             {filteredItems.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-3 py-8 text-center text-gray-400">
-                  該当する品目がありません
+                  No items found for current filters.
                 </td>
               </tr>
             )}
@@ -242,13 +267,9 @@ export default function InventoryForm({ items, suppliers, categories }: Inventor
         </table>
       </div>
 
-      {/* Footer link */}
       <div>
-        <a
-          href="/admin/items"
-          className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
-        >
-          シートにない品目を追加
+        <a href="/admin/items" className="text-sm text-blue-600 hover:text-blue-800 hover:underline">
+          View item master
         </a>
       </div>
     </div>

@@ -1,211 +1,246 @@
-'use client'
+﻿'use client';
 
-import { useState, useMemo, useTransition } from 'react'
-import { Plus, Edit, Ban, ExternalLink, Search } from 'lucide-react'
-import type { Item, Supplier } from '@/types/database'
-import { updateItemAutoOrder, toggleItemActive } from '@/app/admin/items/actions'
-import ItemEditModal from './ItemEditModal'
+import Link from 'next/link';
+import { useMemo, useState, useTransition } from 'react';
+import { Ban, Edit, ExternalLink, Plus, Search } from 'lucide-react';
+import type { Item } from '@/types/database';
+import { toggleItemActive, updateItemAutoOrder } from '@/app/admin/items/actions';
+import ItemEditModal from './ItemEditModal';
+
+type SupplierOption = {
+  id: string;
+  name: string;
+  is_active: boolean;
+};
 
 type ItemWithSupplier = Item & {
-  supplier: Pick<Supplier, 'id' | 'name'> | null
-}
+  supplier: { id: string; name: string } | null;
+};
 
 interface ItemsTableProps {
-  items: ItemWithSupplier[]
-  suppliers: Supplier[]
-  categoryLargeOptions: string[]
+  items: ItemWithSupplier[];
+  suppliers: SupplierOption[];
+  categoryLargeOptions: string[];
+  page: number;
+  totalCount: number;
+  pageSize: number;
 }
-
-const PAGE_SIZE = 50
 
 export default function ItemsTable({
   items,
   suppliers,
   categoryLargeOptions,
+  page,
+  totalCount,
+  pageSize,
 }: ItemsTableProps) {
-  const [consumableFilter, setConsumableFilter] = useState<'all' | 'consumable' | 'non_consumable'>('all')
-  const [categoryFilter, setCategoryFilter] = useState('')
-  const [supplierFilter, setSupplierFilter] = useState('')
-  const [searchText, setSearchText] = useState('')
-  const [page, setPage] = useState(1)
-  const [editItem, setEditItem] = useState<Item | null | 'new'>(null)
-  const [isPending, startTransition] = useTransition()
+  const [consumableFilter, setConsumableFilter] =
+    useState<'all' | 'consumable' | 'non_consumable'>('all');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [supplierFilter, setSupplierFilter] = useState('');
+  const [searchText, setSearchText] = useState('');
+  const [editItem, setEditItem] = useState<Item | null | 'new'>(null);
+  const [isPending, startTransition] = useTransition();
 
   const filtered = useMemo(() => {
-    let result = items
+    let result = items;
 
     if (consumableFilter !== 'all') {
-      result = result.filter((i) => i.consumable_type === consumableFilter)
+      result = result.filter((i) => i.consumable_type === consumableFilter);
     }
     if (categoryFilter) {
-      result = result.filter((i) => i.category_large === categoryFilter)
+      result = result.filter((i) => i.category_large === categoryFilter);
     }
     if (supplierFilter) {
-      result = result.filter((i) => i.supplier_id === supplierFilter)
+      result = result.filter((i) => i.supplier_id === supplierFilter);
     }
     if (searchText.trim()) {
-      const q = searchText.trim().toLowerCase()
-      result = result.filter((i) => i.name.toLowerCase().includes(q))
+      const q = searchText.trim().toLowerCase();
+      result = result.filter((i) => i.name.toLowerCase().includes(q));
     }
 
-    return result
-  }, [items, consumableFilter, categoryFilter, supplierFilter, searchText])
+    return result;
+  }, [items, consumableFilter, categoryFilter, supplierFilter, searchText]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const safePage = Math.min(page, totalPages)
-  const paged = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+  const hasPrevPage = page > 1;
+  const hasNextPage = page * pageSize < totalCount;
 
   function handleAutoOrderToggle(itemId: string, current: boolean) {
     startTransition(async () => {
-      await updateItemAutoOrder(itemId, !current)
-    })
+      await updateItemAutoOrder(itemId, !current);
+    });
   }
 
   function handleToggleActive(itemId: string, current: boolean) {
     startTransition(async () => {
-      await toggleItemActive(itemId, !current)
-    })
+      await toggleItemActive(itemId, !current);
+    });
   }
 
   function formatYen(v: number | null) {
-    if (v === null || v === undefined) return '-'
-    return `¥${v.toLocaleString()}`
+    if (v === null || v === undefined) return '-';
+    return `¥${v.toLocaleString()}`;
   }
 
   function formatDecimal4(v: number | null) {
-    if (v === null || v === undefined) return '-'
-    return v.toFixed(4)
+    if (v === null || v === undefined) return '-';
+    return v.toFixed(4);
   }
 
-  // Unique suppliers from items for filter dropdown
-  const supplierOptions = useMemo(() => {
-    const map = new Map<string, string>()
-    items.forEach((i) => {
-      if (i.supplier) map.set(i.supplier.id, i.supplier.name)
-    })
-    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]))
-  }, [items])
-
   return (
-    <div>
-      {/* Header */}
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">品目マスター</h1>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-bold md:text-2xl">Items</h1>
         <button
           onClick={() => setEditItem('new')}
-          className="flex items-center gap-2 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          className="inline-flex min-h-[44px] items-center gap-2 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
         >
           <Plus className="h-4 w-4" />
-          品目追加
+          Add Item
         </button>
       </div>
 
-      {/* Filters */}
-      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-gray-200 bg-white p-3">
-        {/* 消耗区分 */}
-        <select
-          className="rounded border border-gray-300 px-3 py-2 text-sm"
-          value={consumableFilter}
-          onChange={(e) => {
-            setConsumableFilter(e.target.value as 'all' | 'consumable' | 'non_consumable')
-            setPage(1)
-          }}
-        >
-          <option value="all">全て</option>
-          <option value="consumable">消耗品</option>
-          <option value="non_consumable">非消耗品</option>
-        </select>
+      <div className="rounded-lg border border-gray-200 bg-white p-3">
+        <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-center">
+          <select
+            className="min-h-[44px] rounded border border-gray-300 px-3 py-2 text-sm"
+            value={consumableFilter}
+            onChange={(e) => setConsumableFilter(e.target.value as 'all' | 'consumable' | 'non_consumable')}
+          >
+            <option value="all">All Types</option>
+            <option value="consumable">Consumable</option>
+            <option value="non_consumable">Non-consumable</option>
+          </select>
 
-        {/* 大分類 */}
-        <select
-          className="rounded border border-gray-300 px-3 py-2 text-sm"
-          value={categoryFilter}
-          onChange={(e) => {
-            setCategoryFilter(e.target.value)
-            setPage(1)
-          }}
-        >
-          <option value="">大分類: 全て</option>
-          {categoryLargeOptions.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
+          <select
+            className="min-h-[44px] rounded border border-gray-300 px-3 py-2 text-sm"
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+          >
+            <option value="">All Categories</option>
+            {categoryLargeOptions.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
 
-        {/* サプライヤー */}
-        <select
-          className="rounded border border-gray-300 px-3 py-2 text-sm"
-          value={supplierFilter}
-          onChange={(e) => {
-            setSupplierFilter(e.target.value)
-            setPage(1)
-          }}
-        >
-          <option value="">サプライヤー: 全て</option>
-          {supplierOptions.map(([id, name]) => (
-            <option key={id} value={id}>
-              {name}
-            </option>
-          ))}
-        </select>
+          <select
+            className="min-h-[44px] rounded border border-gray-300 px-3 py-2 text-sm"
+            value={supplierFilter}
+            onChange={(e) => setSupplierFilter(e.target.value)}
+          >
+            <option value="">All Suppliers</option>
+            {suppliers.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
 
-        {/* 検索 */}
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-          <input
-            className="w-full rounded border border-gray-300 py-2 pl-9 pr-3 text-sm"
-            placeholder="品目名で検索..."
-            value={searchText}
-            onChange={(e) => {
-              setSearchText(e.target.value)
-              setPage(1)
-            }}
-          />
+          <div className="relative flex-1 min-w-[220px]">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input
+              className="min-h-[44px] w-full rounded border border-gray-300 py-2 pl-9 pr-3 text-sm"
+              placeholder="Search item name..."
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+            />
+          </div>
         </div>
       </div>
 
-      {/* Count */}
-      <p className="mb-2 text-sm text-gray-500">
-        {filtered.length} 件中 {(safePage - 1) * PAGE_SIZE + 1}〜
-        {Math.min(safePage * PAGE_SIZE, filtered.length)} 件表示
+      <p className="text-sm text-gray-500">
+        Showing {filtered.length} items on this page (total {totalCount.toLocaleString()})
       </p>
 
-      {/* Table */}
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-        <table className="w-full text-sm">
+      <div className="space-y-3 md:hidden">
+        {filtered.length === 0 && (
+          <div className="rounded border bg-white p-6 text-center text-sm text-gray-500">No items found</div>
+        )}
+        {filtered.map((item) => (
+          <div key={item.id} className="rounded-lg border bg-white p-4 shadow-sm">
+            <div className="mb-2 flex items-start justify-between gap-3">
+              <button
+                className="text-left text-base font-semibold text-blue-700"
+                onClick={() => setEditItem(item)}
+              >
+                {item.name}
+              </button>
+              {item.product_url && (
+                <a href={item.product_url} target="_blank" rel="noopener noreferrer" className="text-gray-500">
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
+              <div>Spec: {item.spec ?? '-'}</div>
+              <div>Supplier: {item.supplier?.name ?? '-'}</div>
+              <div>Unit Price: {formatYen(item.unit_price)}</div>
+              <div>Per Visit: {formatDecimal4(item.consumption_per_visit)}</div>
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => handleAutoOrderToggle(item.id, item.auto_order_enabled)}
+                className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors disabled:opacity-50 ${
+                  item.auto_order_enabled ? 'bg-blue-600' : 'bg-gray-200'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                    item.auto_order_enabled ? 'translate-x-4' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+              <button
+                onClick={() => handleToggleActive(item.id, item.is_active)}
+                disabled={isPending}
+                className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded border border-gray-200 text-gray-600"
+                title={item.is_active ? 'Deactivate' : 'Activate'}
+              >
+                <Ban className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setEditItem(item)}
+                className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded border border-gray-200 text-gray-600"
+                title="Edit"
+              >
+                <Edit className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
+        <table className="w-full min-w-[980px] text-sm">
           <thead>
             <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
-              <th className="px-4 py-3" style={{ width: '25%' }}>品目名</th>
-              <th className="px-4 py-3" style={{ width: '10%' }}>規格</th>
-              <th className="px-4 py-3" style={{ width: '15%' }}>大分類 &gt; 中分類</th>
-              <th className="px-4 py-3" style={{ width: '12%' }}>サプライヤー</th>
-              <th className="px-4 py-3 text-right" style={{ width: '8%' }}>単価</th>
-              <th className="px-4 py-3 text-right" style={{ width: '8%' }}>1施術あたり</th>
-              <th className="px-4 py-3 text-center" style={{ width: '6%' }}>客数連動</th>
-              <th className="px-4 py-3 text-center" style={{ width: '6%' }}>自動発注</th>
-              <th className="px-4 py-3 text-center" style={{ width: '10%' }}>操作</th>
+              <th className="px-4 py-3">Name</th>
+              <th className="px-4 py-3">Spec</th>
+              <th className="px-4 py-3">Category</th>
+              <th className="px-4 py-3">Supplier</th>
+              <th className="px-4 py-3 text-right">Unit Price</th>
+              <th className="px-4 py-3 text-right">Per Visit</th>
+              <th className="px-4 py-3 text-center">Visitor Linked</th>
+              <th className="px-4 py-3 text-center">Auto Order</th>
+              <th className="px-4 py-3 text-center">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {paged.length === 0 && (
+            {filtered.length === 0 && (
               <tr>
                 <td colSpan={9} className="px-4 py-8 text-center text-gray-400">
-                  品目が見つかりません
+                  No items found
                 </td>
               </tr>
             )}
-            {paged.map((item) => (
-              <tr
-                key={item.id}
-                className={`hover:bg-gray-50 ${!item.is_active ? 'opacity-50' : ''}`}
-              >
-                {/* 品目名 */}
+            {filtered.map((item) => (
+              <tr key={item.id} className={`hover:bg-gray-50 ${!item.is_active ? 'opacity-50' : ''}`}>
                 <td className="px-4 py-3">
-                  <button
-                    className="text-left font-medium text-blue-600 hover:underline"
-                    onClick={() => setEditItem(item)}
-                  >
+                  <button className="text-left font-medium text-blue-600 hover:underline" onClick={() => setEditItem(item)}>
                     {item.name}
                   </button>
                   {item.product_url && (
@@ -219,42 +254,20 @@ export default function ItemsTable({
                     </a>
                   )}
                 </td>
-
-                {/* 規格 */}
                 <td className="px-4 py-3 text-gray-600">{item.spec ?? '-'}</td>
-
-                {/* 大分類>中分類 */}
                 <td className="px-4 py-3 text-gray-600">
                   {item.category_large} &gt; {item.category_medium}
                 </td>
-
-                {/* サプライヤー */}
                 <td className="px-4 py-3 text-gray-600">{item.supplier?.name ?? '-'}</td>
-
-                {/* 単価 */}
                 <td className="px-4 py-3 text-right text-gray-600">{formatYen(item.unit_price)}</td>
-
-                {/* 1施術あたり */}
-                <td className="px-4 py-3 text-right text-gray-600">
-                  {formatDecimal4(item.consumption_per_visit)}
-                </td>
-
-                {/* 客数連動 */}
-                <td className="px-4 py-3 text-center">
-                  {item.is_visitor_linked ? (
-                    <span className="text-green-600">○</span>
-                  ) : (
-                    <span className="text-gray-400">×</span>
-                  )}
-                </td>
-
-                {/* 自動発注 toggle */}
+                <td className="px-4 py-3 text-right text-gray-600">{formatDecimal4(item.consumption_per_visit)}</td>
+                <td className="px-4 py-3 text-center">{item.is_visitor_linked ? 'Yes' : 'No'}</td>
                 <td className="px-4 py-3 text-center">
                   <button
                     type="button"
                     disabled={isPending}
                     onClick={() => handleAutoOrderToggle(item.id, item.auto_order_enabled)}
-                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors disabled:opacity-50 ${
+                    className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors disabled:opacity-50 ${
                       item.auto_order_enabled ? 'bg-blue-600' : 'bg-gray-200'
                     }`}
                   >
@@ -265,26 +278,20 @@ export default function ItemsTable({
                     />
                   </button>
                 </td>
-
-                {/* 操作 */}
                 <td className="px-4 py-3 text-center">
                   <div className="flex items-center justify-center gap-2">
                     <button
                       onClick={() => setEditItem(item)}
-                      className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-blue-600"
-                      title="編集"
+                      className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-blue-600"
+                      title="Edit"
                     >
                       <Edit className="h-4 w-4" />
                     </button>
                     <button
                       onClick={() => handleToggleActive(item.id, item.is_active)}
                       disabled={isPending}
-                      className={`rounded p-1 hover:bg-gray-100 disabled:opacity-50 ${
-                        item.is_active
-                          ? 'text-gray-500 hover:text-red-600'
-                          : 'text-red-400 hover:text-green-600'
-                      }`}
-                      title={item.is_active ? '無効化' : '有効化'}
+                      className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-red-600 disabled:opacity-50"
+                      title={item.is_active ? 'Deactivate' : 'Activate'}
                     >
                       <Ban className="h-4 w-4" />
                     </button>
@@ -296,30 +303,30 @@ export default function ItemsTable({
         </table>
       </div>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="mt-4 flex items-center justify-center gap-2">
-          <button
-            className="rounded border border-gray-300 px-3 py-1 text-sm disabled:opacity-40"
-            disabled={safePage <= 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            前へ
-          </button>
-          <span className="text-sm text-gray-600">
-            {safePage} / {totalPages}
-          </span>
-          <button
-            className="rounded border border-gray-300 px-3 py-1 text-sm disabled:opacity-40"
-            disabled={safePage >= totalPages}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            次へ
-          </button>
-        </div>
-      )}
+      <div className="flex items-center justify-between rounded-lg border bg-white p-3">
+        <Link
+          href={`/admin/items?page=${Math.max(1, page - 1)}`}
+          prefetch={false}
+          className={`rounded border px-3 py-2 text-sm ${
+            hasPrevPage ? 'border-gray-300 text-gray-700 hover:bg-gray-50' : 'pointer-events-none border-gray-200 text-gray-300'
+          }`}
+        >
+          Previous
+        </Link>
+        <span className="text-sm text-gray-600">
+          Page {page} / {Math.max(1, Math.ceil(totalCount / pageSize))}
+        </span>
+        <Link
+          href={`/admin/items?page=${page + 1}`}
+          prefetch={false}
+          className={`rounded border px-3 py-2 text-sm ${
+            hasNextPage ? 'border-gray-300 text-gray-700 hover:bg-gray-50' : 'pointer-events-none border-gray-200 text-gray-300'
+          }`}
+        >
+          Next
+        </Link>
+      </div>
 
-      {/* Edit Modal */}
       {editItem !== null && (
         <ItemEditModal
           item={editItem === 'new' ? null : editItem}
@@ -327,11 +334,10 @@ export default function ItemsTable({
           categoryLargeOptions={categoryLargeOptions}
           onClose={() => setEditItem(null)}
           onSaved={() => {
-            setEditItem(null)
-            // Data refreshes via revalidatePath in server actions
+            setEditItem(null);
           }}
         />
       )}
     </div>
-  )
+  );
 }

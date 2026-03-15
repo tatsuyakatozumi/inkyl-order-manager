@@ -1,8 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getAutoOrderModule } from '@/lib/auto-order';
 import { decryptCredentials } from '@/lib/utils/encryption';
 import { uploadScreenshot } from '@/lib/utils/screenshot-uploader';
+
+function normalizeRel<T>(value: T | T[] | null | undefined): T | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,9 +25,12 @@ export async function POST(request: NextRequest) {
 
     const { data: monthlyOrders, error: ordersError } = await supabase
       .from('ord_monthly_orders')
-      .select('*, item:ord_items!item_id(*, supplier:ord_suppliers!supplier_id(*))')
+      .select(
+        'id,item_id,final_quantity,item:ord_items!item_id(id,name,product_url,supplier_product_code,unit_price,supplier:ord_suppliers!supplier_id(id,name))',
+      )
       .eq('year_month', yearMonth)
-      .in('item_id', itemIds);
+      .in('item_id', itemIds)
+      .limit(5000);
 
     if (ordersError) {
       return NextResponse.json(
@@ -40,7 +48,9 @@ export async function POST(request: NextRequest) {
 
     const { data: supplier, error: supplierError } = await supabase
       .from('ord_suppliers')
-      .select('*')
+      .select(
+        'id,name,credentials_encrypted,auto_order_supported,order_cycle,is_active,created_at,updated_at,login_url,lead_time_days,notes',
+      )
       .eq('name', supplierName)
       .single();
 
@@ -61,14 +71,16 @@ export async function POST(request: NextRequest) {
     const decrypted = decryptCredentials(supplier.credentials_encrypted);
     const credentials: { username: string; password: string } = JSON.parse(decrypted);
 
-    const orderItems = monthlyOrders.map((order: any) => ({
+    const orderItems = monthlyOrders.map((order: any) => {
+      const item = normalizeRel(order.item);
+      return {
       itemId: order.item_id,
-      name: order.item?.name ?? '',
-      productUrl: order.item?.product_url ?? '',
-      supplierProductCode: order.item?.supplier_product_code ?? null,
+      name: item?.name ?? '',
+      productUrl: item?.product_url ?? '',
+      supplierProductCode: item?.supplier_product_code ?? null,
       quantity: order.final_quantity,
-      unitPrice: order.item?.unit_price ?? 0,
-    }));
+      unitPrice: item?.unit_price ?? 0,
+    }});
 
     const autoOrder = getAutoOrderModule(supplierName);
     if (!autoOrder) {
@@ -83,7 +95,6 @@ export async function POST(request: NextRequest) {
       autoConfirm ?? false,
     );
 
-    // Upload screenshot
     let screenshotUrl: string | null = null;
     let screenshotExpiresAt: string | null = null;
     if (screenshotPath) {
@@ -94,21 +105,21 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Insert results into ord_order_history
     const historyRecords = results.map((result: any) => {
       const order = monthlyOrders.find(
         (o: any) => o.item_id === result.itemId,
       );
+      const item = normalizeRel(order?.item);
       return {
         item_id: result.itemId,
         supplier_id: supplier.id,
         order_date: new Date().toISOString().split('T')[0],
         order_type: 'monthly_regular' as const,
         quantity: order?.final_quantity ?? 0,
-        unit_price: order?.item?.unit_price ?? null,
+        unit_price: item?.unit_price ?? null,
         total_amount:
-          order?.final_quantity && order?.item?.unit_price
-            ? order.final_quantity * order.item.unit_price
+          order?.final_quantity && item?.unit_price
+            ? order.final_quantity * item.unit_price
             : null,
         order_method: 'auto' as const,
         auto_order_status: result.status,

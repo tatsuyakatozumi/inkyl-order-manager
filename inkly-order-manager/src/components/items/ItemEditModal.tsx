@@ -2,12 +2,12 @@
 
 import { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
-import type { Item, Supplier, ItemInsert, ItemUpdate } from '@/types/database'
+import type { Item, ItemInsert, ItemUpdate } from '@/types/database'
 import { createItem, updateItem } from '@/app/admin/items/actions'
 
 interface ItemEditModalProps {
   item: Item | null
-  suppliers: Supplier[]
+  suppliers: Array<{ id: string; name: string; is_active: boolean }>
   categoryLargeOptions: string[]
   onClose: () => void
   onSaved: () => void

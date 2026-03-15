@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+﻿import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { OrderHistory } from '@/components/orders/OrderHistory';
 
 export default async function OrderHistoryPage() {
@@ -6,13 +6,14 @@ export default async function OrderHistoryPage() {
 
   const { data: suppliers } = await supabase
     .from('ord_suppliers')
-    .select('id, name')
+    .select('id,name')
     .eq('is_active', true)
-    .order('name');
+    .order('name')
+    .limit(300);
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-6">発注履歴</h1>
+      <h1 className="mb-6 text-xl font-bold md:text-2xl">Order History</h1>
       <OrderHistory suppliers={suppliers ?? []} />
     </div>
   );

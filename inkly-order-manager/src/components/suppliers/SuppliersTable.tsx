@@ -81,7 +81,7 @@ export function SuppliersTable({ suppliers }: SuppliersTableProps) {
                 <td className="px-4 py-3 text-center">
                   <button
                     onClick={() => setEditingSupplier(supplier)}
-                    className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium text-blue-600 hover:bg-blue-50 transition-colors"
+                    className="inline-flex min-h-[44px] items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium text-blue-600 transition-colors hover:bg-blue-50"
                   >
                     <Pencil className="h-4 w-4" />
                     編集

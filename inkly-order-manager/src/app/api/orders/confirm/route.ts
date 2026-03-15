@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getAutoOrderModule } from '@/lib/auto-order';
 import { decryptCredentials } from '@/lib/utils/encryption';
@@ -22,28 +22,26 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createServerSupabaseClient();
 
-    // Idempotency check: look for existing records with this key
     const { data: existing } = await supabase
       .from('ord_order_history')
-      .select('id, auto_order_status')
+      .select('id,auto_order_status')
       .eq('idempotency_key', idempotencyKey)
       .limit(1);
 
     if (existing && existing.length > 0) {
-      console.log('[Confirm] Idempotency key already used:', idempotencyKey);
       return NextResponse.json({
         success: true,
         alreadyProcessed: true,
         status: existing[0].auto_order_status,
-        message: '既に処理済みです',
+        message: 'Already processed with the same idempotency key.',
       });
     }
 
-    // Verify all target records are in 'cart_added' status
     const { data: targetOrders, error: fetchError } = await supabase
       .from('ord_order_history')
-      .select('id, auto_order_status, supplier_id')
-      .in('id', orderHistoryIds);
+      .select('id,auto_order_status,supplier_id')
+      .in('id', orderHistoryIds)
+      .limit(5000);
 
     if (fetchError) {
       return NextResponse.json({ error: fetchError.message }, { status: 500 });
@@ -53,14 +51,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No orders found' }, { status: 404 });
     }
 
-    // Check statuses
     const alreadyOrdered = targetOrders.filter(o => o.auto_order_status === 'ordered');
     if (alreadyOrdered.length === targetOrders.length) {
       return NextResponse.json({
         success: true,
         alreadyProcessed: true,
         status: 'ordered',
-        message: '既に注文確定済みです',
+        message: 'Orders are already confirmed.',
       });
     }
 
@@ -68,14 +65,15 @@ export async function POST(request: NextRequest) {
     if (notCartAdded.length > 0) {
       const invalidStatuses = [...new Set(notCartAdded.map(o => o.auto_order_status))];
       return NextResponse.json({
-        error: `対象外のステータスが含まれています: ${invalidStatuses.join(', ')}`,
+        error: `Invalid status for confirm: ${invalidStatuses.join(', ')}`,
       }, { status: 400 });
     }
 
-    // Get supplier credentials
     const { data: supplier, error: supplierError } = await supabase
       .from('ord_suppliers')
-      .select('*')
+      .select(
+        'id,name,credentials_encrypted,auto_order_supported,order_cycle,is_active,created_at,updated_at,login_url,lead_time_days,notes',
+      )
       .eq('name', supplierName)
       .single();
 
@@ -95,7 +93,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Execute checkout only (login → go to cart → checkout)
     const decrypted = decryptCredentials(supplier.credentials_encrypted);
     const credentials: { username: string; password: string } = JSON.parse(decrypted);
 
@@ -107,9 +104,7 @@ export async function POST(request: NextRequest) {
       await autoOrder.initialize();
       await autoOrder.ensureLoggedIn(credentials);
 
-      console.log('[Confirm] proceeding to checkout for', supplierName);
       checkoutSuccess = await autoOrder.checkout();
-      console.log('[Confirm] checkout result:', checkoutSuccess);
 
       const screenshotPath = await autoOrder.takeScreenshot('confirm_result');
       if (screenshotPath) {
@@ -125,7 +120,6 @@ export async function POST(request: NextRequest) {
       await autoOrder.cleanup();
     }
 
-    // Update statuses
     const newStatus = checkoutSuccess ? 'ordered' : 'cart_added';
     await supabase
       .from('ord_order_history')
@@ -142,8 +136,8 @@ export async function POST(request: NextRequest) {
       screenshotUrl,
       screenshotExpiresAt,
       message: checkoutSuccess
-        ? '注文が確定しました'
-        : '注文確定に失敗しました。カートには投入済みです。',
+        ? 'Order confirmed successfully.'
+        : 'Checkout failed. Cart items are kept.',
     });
   } catch (error: any) {
     console.error('Confirm order error:', error);
