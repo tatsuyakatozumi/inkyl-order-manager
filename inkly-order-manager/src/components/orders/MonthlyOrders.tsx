@@ -1,8 +1,9 @@
 ﻿'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import { ExternalLink, Image, ShoppingCart, Zap } from 'lucide-react';
+import { AlertTriangle, ExternalLink, Image, ShoppingCart, Zap } from 'lucide-react';
 import { updateManualOrderQuantity, updateOrderAdjustment } from '@/app/admin/orders/actions';
+import { useAutoOrderSetting } from '@/hooks/useAutoOrderSetting';
 
 type OrderStatus = 'draft' | 'confirmed' | 'ordered' | 'completed';
 
@@ -108,6 +109,7 @@ export function MonthlyOrders() {
   const [error, setError] = useState<string | null>(null);
   const [screenshotUrls, setScreenshotUrls] = useState<Record<string, string>>({});
   const [confirming, setConfirming] = useState<string | null>(null);
+  const { autoOrderEnabled } = useAutoOrderSetting();
 
   const [autoOrders, setAutoOrders] = useState<CalculatedOrderItem[]>([]);
   const [manualOrders, setManualOrders] = useState<CalculatedOrderItem[]>([]);
@@ -355,6 +357,7 @@ export function MonthlyOrders() {
               executing={executing}
               screenshotUrls={screenshotUrls}
               confirming={confirming}
+              autoOrderEnabled={autoOrderEnabled}
               onAdjustmentInput={handleAdjustmentInput}
               onAdjustmentCommit={handleAdjustmentCommit}
               onExecuteOrder={handleExecuteOrder}
@@ -403,6 +406,7 @@ function AutoSection({
   executing,
   screenshotUrls,
   confirming,
+  autoOrderEnabled,
   onAdjustmentInput,
   onAdjustmentCommit,
   onExecuteOrder,
@@ -413,6 +417,7 @@ function AutoSection({
   executing: string | null;
   screenshotUrls: Record<string, string>;
   confirming: string | null;
+  autoOrderEnabled: boolean | null;
   onAdjustmentInput: (order: CalculatedOrderItem, value: number) => void;
   onAdjustmentCommit: (order: CalculatedOrderItem) => void;
   onExecuteOrder: (supplier: SupplierLite, items: CalculatedOrderItem[], autoConfirm: boolean) => void;
@@ -519,12 +524,19 @@ function AutoSection({
                   </button>
                   <button
                     onClick={() => onExecuteOrder(group.supplier, group.items, true)}
-                    disabled={executing === supplierId}
+                    disabled={executing === supplierId || autoOrderEnabled === false}
                     className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
                   >
                     {executing === supplierId ? 'Processing...' : <><Zap className="h-4 w-4" />Confirm order</>}
                   </button>
                 </div>
+
+                {autoOrderEnabled === false && (
+                  <div className="mt-2 flex items-start gap-2 rounded-md bg-yellow-50 border border-yellow-200 p-2 text-xs text-yellow-800">
+                    <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0" />
+                    <span>Auto-order (checkout) is disabled. Enable in Settings.</span>
+                  </div>
+                )}
 
                 {screenshotUrls[supplierId] && (
                   <div className="mt-3">
@@ -544,7 +556,7 @@ function AutoSection({
                   <div className="mt-3">
                     <button
                       onClick={() => onConfirmOrder(group.supplier, group.items)}
-                      disabled={confirming === supplierId}
+                      disabled={confirming === supplierId || autoOrderEnabled === false}
                       className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
                     >
                       <Zap className="h-4 w-4" />

@@ -11,6 +11,7 @@ import {
   History,
   Menu,
   Package,
+  Settings,
   ShoppingCart,
   TrendingUp,
   X,
@@ -25,6 +26,7 @@ const menuItems = [
   { icon: Building2, label: 'Suppliers', href: '/admin/suppliers' },
   { icon: AlertTriangle, label: 'Alerts', href: '/admin/alerts' },
   { icon: TrendingUp, label: 'Analytics', href: '/admin/analytics' },
+  { icon: Settings, label: 'Settings', href: '/admin/settings' },
 ];
 
 type SideNavProps = {

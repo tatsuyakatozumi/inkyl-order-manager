@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { ItemSelectModal, type SelectableItem } from './ItemSelectModal';
 import { showToast } from '@/components/ui/Toast';
+import { useAutoOrderSetting } from '@/hooks/useAutoOrderSetting';
 
 interface OrderLineItem {
   item: SelectableItem;
@@ -70,6 +71,7 @@ export function AdhocOrderForm() {
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const [lastAutoConfirm, setLastAutoConfirm] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const { autoOrderEnabled } = useAutoOrderSetting();
   const [orderHistoryIds, setOrderHistoryIds] = useState<string[]>([]);
 
   const handleItemSelect = useCallback(
@@ -322,9 +324,12 @@ export function AdhocOrderForm() {
 
                       {!lastAutoConfirm && hasCartItems && (
                         <div className="mt-3">
+                          {autoOrderEnabled === false && (
+                            <p className="mb-2 text-xs text-yellow-700">Auto-order (checkout) is disabled in Settings.</p>
+                          )}
                           <button
                             onClick={() => handleConfirmOrder(supplierName)}
-                            disabled={confirming === supplierName}
+                            disabled={confirming === supplierName || autoOrderEnabled === false}
                             className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
                           >
                             <Zap className="h-4 w-4" />
@@ -489,13 +494,20 @@ export function AdhocOrderForm() {
                 </button>
                 <button
                   onClick={() => handleAutoOrderClick(true)}
-                  disabled={submitting}
+                  disabled={submitting || autoOrderEnabled === false}
                   className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-md bg-red-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50 md:w-auto"
                 >
                   <Zap className="h-4 w-4" />
                   {submitting ? 'Running...' : 'Confirm order'}
                 </button>
               </div>
+
+              {autoOrderEnabled === false && (
+                <div className="flex items-start gap-2 rounded-md bg-yellow-50 border border-yellow-200 p-3 text-sm text-yellow-800">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  <span>Auto-order (checkout) is disabled. Cart addition is available. Enable in Settings.</span>
+                </div>
+              )}
             </div>
           )}
 

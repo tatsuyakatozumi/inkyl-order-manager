@@ -1,4 +1,5 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { getAutoOrderModule } from '@/lib/auto-order';
 import { decryptCredentials } from '@/lib/utils/encryption';
@@ -6,6 +7,24 @@ import { uploadScreenshot } from '@/lib/utils/screenshot-uploader';
 
 export async function POST(request: NextRequest) {
   try {
+    // Server-side guard: check auto_order_enabled setting
+    const serviceClient = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    );
+    const { data: setting } = await serviceClient
+      .from('ord_settings')
+      .select('value')
+      .eq('key', 'auto_order_enabled')
+      .single();
+
+    if (setting && setting.value === false) {
+      return NextResponse.json(
+        { error: 'Auto-order (checkout) is currently disabled in settings.' },
+        { status: 403 },
+      );
+    }
+
     const { supplierName, orderHistoryIds, idempotencyKey } =
       (await request.json()) as {
         supplierName: string;

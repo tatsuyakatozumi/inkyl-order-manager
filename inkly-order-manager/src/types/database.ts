@@ -306,6 +306,24 @@ export interface Database {
           created_at?: string;
         };
       };
+
+      ord_settings: {
+        Row: {
+          key: string;
+          value: unknown;
+          updated_at: string;
+        };
+        Insert: {
+          key: string;
+          value: unknown;
+          updated_at?: string;
+        };
+        Update: {
+          key?: string;
+          value?: unknown;
+          updated_at?: string;
+        };
+      };
     };
   };
 }
@@ -358,6 +376,12 @@ export type VisitorStatsInsert =
   Database["public"]["Tables"]["ord_visitor_stats"]["Insert"];
 export type VisitorStatsUpdate =
   Database["public"]["Tables"]["ord_visitor_stats"]["Update"];
+
+export type Setting = Database["public"]["Tables"]["ord_settings"]["Row"];
+export type SettingInsert =
+  Database["public"]["Tables"]["ord_settings"]["Insert"];
+export type SettingUpdate =
+  Database["public"]["Tables"]["ord_settings"]["Update"];
 
 // ---------------------------------------------------------------------------
 // Enum-like types extracted from column definitions

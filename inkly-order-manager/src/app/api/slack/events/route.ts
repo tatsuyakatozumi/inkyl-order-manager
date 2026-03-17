@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { parseStockMessage } from '@/lib/slack/parser';
+import { processOrderRequest } from '@/lib/slack/process-order-request';
+import { sendMessage } from '@/lib/slack/client';
 import crypto from 'crypto';
 
 async function verifySlackSignature(
@@ -92,6 +94,22 @@ export async function POST(request: NextRequest) {
         !event.bot_id &&
         !event.subtype
       ) {
+        // Route: order request channel
+        const orderRequestChannel = process.env.SLACK_CHANNEL_ORDER_REQUESTS;
+        if (orderRequestChannel && event.channel === orderRequestChannel) {
+          await sendMessage(
+            event.channel,
+            ':hourglass_flowing_sand: 注文リクエストを処理中です...',
+            event.ts,
+          );
+          // Fire-and-forget background processing
+          processOrderRequest(event).catch((err) =>
+            console.error('[OrderRequest] Background processing error:', err),
+          );
+          return NextResponse.json({ ok: true });
+        }
+
+        // Route: stock alert (existing flow)
         const supabase = await createServerSupabaseClient();
 
         // Get all item names for matching
