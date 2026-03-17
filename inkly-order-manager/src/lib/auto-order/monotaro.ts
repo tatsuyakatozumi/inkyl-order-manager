@@ -37,45 +37,182 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
 
   async isLoggedIn(): Promise<boolean> {
     if (!this.page) return false;
-    // Not-logged-in users see a "ログイン" button/link in the header.
-    // If "ログイン" link exists, user is NOT logged in.
-    const loginButton = await this.page.$('a[href*="/login/"]:has-text("ログイン")');
-    if (loginButton) {
-      console.log('[MonotaRO] isLoggedIn: found login button → not logged in');
+    try {
+      const hasLoginLink = await this.page.locator('a:has-text("ログイン")').first().count() > 0;
+      const hasLogoutLink = await this.page.locator('a:has-text("ログアウト")').first().count() > 0;
+      const hasUserInfo = await this.page.locator('.LoginUserName, .user-name, [class*="userName"]').first().count() > 0;
+
+      const isLoggedIn = !hasLoginLink || hasLogoutLink || hasUserInfo;
+      console.log(`[MonotaRO] isLoggedIn: loginLink=${hasLoginLink}, logoutLink=${hasLogoutLink}, userInfo=${hasUserInfo} → ${isLoggedIn}`);
+      return isLoggedIn;
+    } catch (e) {
+      console.log('[MonotaRO] isLoggedIn: error:', (e as Error).message);
       return false;
     }
-    // Double-check: logged-in users see their name or "ログアウト" link
-    const logoutLink = await this.page.$('a:has-text("ログアウト")');
-    const userName = await this.page.$('.LoginUserName, .user-name, [class*="userName"]');
-    const isLoggedIn = logoutLink !== null || userName !== null;
-    console.log('[MonotaRO] isLoggedIn: logoutLink=', !!logoutLink, 'userName=', !!userName, '→', isLoggedIn);
-    return isLoggedIn;
   }
 
   async navigateToLoginPage(): Promise<void> {
     if (!this.page) return;
-    // Click the "ログイン" link/button in the header
-    const loginLink = await this.page.$('a[href*="/login/"]');
-    if (loginLink) {
-      await loginLink.click();
-      await this.page.waitForLoadState('domcontentloaded');
-    } else {
-      await this.page.goto(`${MONOTARO_BASE_URL}/login/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    }
+    console.log('[MonotaRO] navigateToLoginPage: going to /login/');
+    await this.page.goto(`${MONOTARO_BASE_URL}/login/`, {
+      waitUntil: 'domcontentloaded',
+      timeout: 30000,
+    });
+    await this.page.waitForTimeout(2000);
+    console.log('[MonotaRO] navigateToLoginPage: URL:', this.page.url());
   }
 
   async login(credentials: { username: string; password: string }): Promise<boolean> {
     if (!this.page) return false;
     try {
-      await this.page.fill('input[name="userId"]', credentials.username);
-      await this.page.fill('input[name="password"]', credentials.password);
-      await this.page.click('button:has-text("ログイン")');
-      await this.page.waitForLoadState('domcontentloaded');
-      await this.page.waitForTimeout(3000);
+      console.log('[MonotaRO] login: starting');
+      console.log('[MonotaRO] login: current URL:', this.page.url());
+      console.log('[MonotaRO] login: username length:', credentials.username?.length || 0);
+      console.log('[MonotaRO] login: password length:', credentials.password?.length || 0);
 
-      return await this.isLoggedIn();
-    } catch {
-      await this.takeScreenshot('login_error');
+      // Navigate to login page directly
+      await this.page.goto(`${MONOTARO_BASE_URL}/login/`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+      console.log('[MonotaRO] login: navigated to login page, URL:', this.page.url());
+      await this.page.waitForTimeout(2000);
+      await this.takeScreenshot('login_page');
+
+      // Find userId field
+      const userIdSelectors = [
+        'input[name="userId"]',
+        'input[name="loginId"]',
+        'input[id="userId"]',
+        'input[id="loginId"]',
+        'input[type="email"]',
+        'input[type="text"][autocomplete="username"]',
+      ];
+
+      let userIdField = null;
+      for (const selector of userIdSelectors) {
+        const el = this.page.locator(selector).first();
+        if (await el.count() > 0) {
+          userIdField = el;
+          console.log(`[MonotaRO] login: found userId field: ${selector}`);
+          break;
+        }
+      }
+
+      if (!userIdField) {
+        console.log('[MonotaRO] login: userId field NOT FOUND');
+        const inputs = await this.page.evaluate(() => {
+          return Array.from(document.querySelectorAll('input')).map(el => ({
+            name: el.getAttribute('name'),
+            id: el.id,
+            type: el.type,
+            placeholder: el.placeholder,
+            visible: (el as HTMLElement).offsetParent !== null,
+          }));
+        });
+        console.log('[MonotaRO] login: page inputs:', JSON.stringify(inputs));
+        await this.takeScreenshot('login_no_userid_field');
+        return false;
+      }
+
+      await userIdField.fill(credentials.username);
+      console.log('[MonotaRO] login: filled userId');
+
+      // Find password field
+      const passwordSelectors = [
+        'input[name="password"]',
+        'input[id="password"]',
+        'input[type="password"]',
+      ];
+
+      let passwordField = null;
+      for (const selector of passwordSelectors) {
+        const el = this.page.locator(selector).first();
+        if (await el.count() > 0) {
+          passwordField = el;
+          console.log(`[MonotaRO] login: found password field: ${selector}`);
+          break;
+        }
+      }
+
+      if (!passwordField) {
+        console.log('[MonotaRO] login: password field NOT FOUND');
+        await this.takeScreenshot('login_no_password_field');
+        return false;
+      }
+
+      await passwordField.fill(credentials.password);
+      console.log('[MonotaRO] login: filled password');
+
+      // Find and click login button
+      const loginButtonSelectors = [
+        'button:has-text("ログイン")',
+        'input[type="submit"][value="ログイン"]',
+        'button[type="submit"]',
+        '#loginButton',
+        '.login-button',
+      ];
+
+      let loginClicked = false;
+      for (const selector of loginButtonSelectors) {
+        try {
+          const el = this.page.locator(selector).first();
+          if (await el.count() > 0) {
+            await el.click({ force: true, timeout: 5000 });
+            loginClicked = true;
+            console.log(`[MonotaRO] login: clicked login button: ${selector}`);
+            break;
+          }
+        } catch (e) {
+          console.log(`[MonotaRO] login: ${selector} click failed: ${(e as Error).message}`);
+        }
+      }
+
+      if (!loginClicked) {
+        // Form submit fallback
+        try {
+          await this.page.evaluate(() => {
+            const form = document.querySelector('form');
+            if (form) form.submit();
+          });
+          loginClicked = true;
+          console.log('[MonotaRO] login: submitted form via JS');
+        } catch (e) {
+          console.log('[MonotaRO] login: form submit failed:', (e as Error).message);
+        }
+      }
+
+      if (!loginClicked) {
+        console.log('[MonotaRO] login: could not click login button');
+        await this.takeScreenshot('login_no_button');
+        return false;
+      }
+
+      // Wait for page transition
+      await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+      await this.page.waitForTimeout(3000);
+      console.log('[MonotaRO] login: after submit, URL:', this.page.url());
+      await this.takeScreenshot('login_after_submit');
+
+      // Check login result
+      const loggedIn = await this.isLoggedIn();
+      console.log('[MonotaRO] login: isLoggedIn result:', loggedIn);
+
+      if (!loggedIn) {
+        const errorText = await this.page.evaluate(() => {
+          const errorEls = document.querySelectorAll('.error, .alert, .login-error, [class*="error"], [class*="alert"]');
+          return Array.from(errorEls).map(el => (el.textContent || '').trim()).filter(t => t.length > 0);
+        });
+        if (errorText.length > 0) {
+          console.log('[MonotaRO] login: error messages:', JSON.stringify(errorText));
+        }
+      }
+
+      return loggedIn;
+    } catch (e) {
+      console.log('[MonotaRO] login: EXCEPTION:', (e as Error).message);
+      console.log('[MonotaRO] login: stack:', (e as Error).stack);
+      await this.takeScreenshot('login_exception');
       return false;
     }
   }
@@ -161,13 +298,52 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
         console.log('[MonotaRO] checkout: clicked "レジへ進む"');
       }
 
+      // Wait for page transition
+      await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+      await this.page.waitForTimeout(3000);
+      console.log('[MonotaRO] checkout: after レジへ進む, URL:', this.page.url());
+      await this.takeScreenshot('checkout_after_proceed');
+
+      // Check if login form appeared instead of checkout page
+      const hasLoginForm = await this.page.evaluate(() => {
+        const bodyText = document.body.innerText;
+        return (bodyText.includes('ユーザーID') || bodyText.includes('ログイン'))
+          && bodyText.includes('パスワード')
+          && !bodyText.includes('ご注文内容の確定');
+      });
+
+      if (hasLoginForm && this.credentials) {
+        console.log('[MonotaRO] checkout: login form detected, attempting inline login');
+        await this.takeScreenshot('checkout_inline_login');
+
+        const userIdField = this.page.locator('input[name="userId"], input[name="loginId"], input[type="text"]').first();
+        if (await userIdField.count() > 0) {
+          await userIdField.fill(this.credentials.username);
+          const pwField = this.page.locator('input[type="password"]').first();
+          if (await pwField.count() > 0) {
+            await pwField.fill(this.credentials.password);
+            // Click the submit button on the login form (could say "レジへ進む" or "ログイン")
+            const submitBtn = this.page.locator('button[type="submit"], input[type="submit"], button:has-text("レジへ進む"), button:has-text("ログイン")').first();
+            if (await submitBtn.count() > 0) {
+              await submitBtn.click({ force: true });
+              await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+              await this.page.waitForTimeout(3000);
+              console.log('[MonotaRO] checkout: inline login submitted, URL:', this.page.url());
+              await this.takeScreenshot('checkout_after_inline_login');
+            }
+          }
+        }
+      }
+
       // Wait for order confirmation page (URL contains checkout.confirm)
       try {
-        await this.page.waitForURL('**/checkout.confirm**', { timeout: 30000 });
+        if (!this.page.url().includes('checkout.confirm')) {
+          await this.page.waitForURL('**/checkout.confirm**', { timeout: 15000 });
+        }
       } catch {
-        await this.page.waitForLoadState('domcontentloaded');
+        // May already be on confirmation page
       }
-      await this.page.waitForTimeout(3000);
+      await this.page.waitForTimeout(2000);
       console.log('[MonotaRO] checkout: Step 3 - on order confirmation page, URL:', this.page.url());
 
       // Verify we're on the confirmation page

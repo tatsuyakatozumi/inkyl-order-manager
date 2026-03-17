@@ -29,6 +29,7 @@ export abstract class BaseAutoOrder {
   protected page: Page | null = null;
   protected supplierName: string;
   protected loggedIn: boolean = false;
+  protected credentials: { username: string; password: string } | null = null;
 
   constructor(supplierName: string) {
     this.supplierName = supplierName;
@@ -209,6 +210,7 @@ export abstract class BaseAutoOrder {
   ): Promise<ExecuteOrderResult> {
     try {
       await this.initialize();
+      this.credentials = credentials;
       await this.ensureLoggedIn(credentials);
       const { results, cartUrl } = await this.addToCart(items);
 
