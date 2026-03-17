@@ -223,114 +223,166 @@ export class AmazonAutoOrder extends BaseAutoOrder {
       await this.takeScreenshot('checkout_step1_proceed');
       console.log('[Amazon checkout] Step 1: Clicked proceed to checkout, URL:', this.page.url());
 
-      // ---- Step 2: "このお支払方法を使用" ----
+      // ---- Step 2: "このお支払方法を使用" (SPA - URL does not change) ----
       console.log('[Amazon checkout] Step 2: Looking for payment method button');
       console.log('[Amazon checkout] Step 2: Current URL:', this.page.url());
       await this.page.waitForTimeout(2000);
+      await this.takeScreenshot('checkout_step2_before');
 
-      // Screenshot first (capture page state before any click attempts)
-      try {
-        await this.takeScreenshot('checkout_step2_page');
-        console.log('[Amazon checkout] Step 2: Screenshot taken');
-      } catch (e) {
-        console.log('[Amazon checkout] Step 2: Screenshot failed:', (e as Error).message);
-      }
-
-      // Diagnostic: log all interactive elements on the page
-      try {
-        const pageInfo = await this.page.evaluate(() => {
-          const elements: Array<{tag: string, text: string, name: string | null, type: string | null, visible: boolean}> = [];
-          document.querySelectorAll('input[type="submit"], button, .a-button, [role="button"]').forEach(el => {
-            elements.push({
-              tag: el.tagName,
-              text: (el.textContent || '').trim().substring(0, 60),
-              name: el.getAttribute('name'),
-              type: el.getAttribute('type'),
-              visible: (el as HTMLElement).offsetParent !== null,
-            });
-          });
-          return elements;
-        });
-        console.log('[Amazon checkout] Step 2: Page elements:', JSON.stringify(pageInfo));
-      } catch (e) {
-        console.log('[Amazon checkout] Step 2: Page scan failed:', (e as Error).message);
-      }
-
-      // Click via page.evaluate (bypasses Playwright visibility checks entirely)
       let paymentClicked = false;
+
+      // Method 1: Click input[type="submit"] inside #checkout-primary-continue-button-id
       try {
         paymentClicked = await this.page.evaluate(() => {
-          // Method 1: by name attribute
-          const byName = document.querySelector('input[name*="SetPaymentPlanSelectContinueEvent"]') as HTMLElement;
-          if (byName) { byName.click(); return true; }
-
-          // Method 2: by text content
-          const allElements = document.querySelectorAll('span, input, button, a');
-          for (const el of allElements) {
-            const text = (el.textContent || '').trim();
-            if (text.includes('このお支払方法を使用') || text.includes('続行')) {
-              const clickable = el.closest('.a-button')?.querySelector('input, span') || el;
-              (clickable as HTMLElement).click();
-              return true;
-            }
+          const primaryBtn = document.getElementById('checkout-primary-continue-button-id');
+          if (primaryBtn) {
+            const submitInput = primaryBtn.querySelector('input[type="submit"]');
+            if (submitInput) { (submitInput as HTMLElement).click(); return true; }
+            const innerSpan = primaryBtn.querySelector('.a-button-inner');
+            if (innerSpan) { (innerSpan as HTMLElement).click(); return true; }
+            (primaryBtn as HTMLElement).click();
+            return true;
           }
 
-          // Method 3: first large .a-button-primary
-          const primaryButtons = document.querySelectorAll('.a-button-primary');
-          for (const btn of primaryButtons) {
-            const rect = btn.getBoundingClientRect();
-            if (rect.width > 100) {
-              const input = btn.querySelector('input') || btn.querySelector('span');
-              if (input) { (input as HTMLElement).click(); return true; }
-            }
-          }
-
-          // Method 4: form submit with payment-related value
-          const forms = document.querySelectorAll('form');
-          for (const form of forms) {
-            const submit = form.querySelector('input[type="submit"]') as HTMLElement;
-            if (submit) {
-              const val = submit.getAttribute('value') || '';
-              if (val.includes('支払') || val.includes('続行') || val.includes('使用')) {
-                submit.click();
-                return true;
-              }
-            }
+          const secondaryBtn = document.getElementById('checkout-secondary-continue-button-id');
+          if (secondaryBtn) {
+            const submitInput = secondaryBtn.querySelector('input[type="submit"]');
+            if (submitInput) { (submitInput as HTMLElement).click(); return true; }
+            (secondaryBtn as HTMLElement).click();
+            return true;
           }
 
           return false;
         });
-        console.log('[Amazon checkout] Step 2: Click result:', paymentClicked);
+        console.log('[Amazon checkout] Step 2: ID-based click result:', paymentClicked);
       } catch (e) {
-        console.log('[Amazon checkout] Step 2: Click failed:', (e as Error).message);
+        console.log('[Amazon checkout] Step 2: ID-based click failed:', (e as Error).message);
+      }
+
+      // Method 2: Playwright force click on the button ID
+      if (!paymentClicked) {
+        try {
+          const btn = this.page.locator('#checkout-primary-continue-button-id').first();
+          if (await btn.count() > 0) {
+            await btn.scrollIntoViewIfNeeded().catch(() => {});
+            await btn.click({ force: true, timeout: 5000 });
+            paymentClicked = true;
+            console.log('[Amazon checkout] Step 2: Playwright force click on primary button');
+          }
+        } catch (e) {
+          console.log('[Amazon checkout] Step 2: Playwright force click failed:', (e as Error).message);
+        }
+      }
+
+      // Method 3: Form submit fallback (if button IDs not found)
+      if (!paymentClicked) {
+        try {
+          paymentClicked = await this.page.evaluate(() => {
+            const forms = document.querySelectorAll('form');
+            for (const form of forms) {
+              const submitBtn = form.querySelector('input[type="submit"]') as HTMLInputElement;
+              if (submitBtn && submitBtn.offsetParent !== null) {
+                const formAction = form.getAttribute('action') || '';
+                if (formAction.includes('checkout') || formAction === '') {
+                  submitBtn.click();
+                  return true;
+                }
+              }
+            }
+            return false;
+          });
+          console.log('[Amazon checkout] Step 2: Form submit fallback result:', paymentClicked);
+        } catch (e) {
+          console.log('[Amazon checkout] Step 2: Form submit fallback failed:', (e as Error).message);
+        }
       }
 
       if (!paymentClicked) {
-        console.log('[Amazon checkout] Step 2: FAILED - no clickable element found');
+        console.log('[Amazon checkout] Step 2: ALL METHODS FAILED');
         await this.takeScreenshot('checkout_step2_failed');
         return false;
       }
 
-      await this.page.waitForLoadState('domcontentloaded').catch(() => {});
-      await this.page.waitForTimeout(2000);
-      console.log('[Amazon checkout] Step 2: Done, URL:', this.page.url());
+      // SPA transition: poll for page content change (URL stays the same)
+      console.log('[Amazon checkout] Step 2: Waiting for page content to change...');
+      let contentChanged = false;
+      for (let i = 0; i < 15; i++) {
+        await this.page.waitForTimeout(1000);
+        const state = await this.page.evaluate(() => {
+          const el = document.getElementById('checkout-primary-continue-button-id');
+          const bodyText = document.body.innerText;
+          return {
+            hasPrimaryBtn: !!el,
+            primaryBtnText: el?.textContent?.trim().substring(0, 30) || '',
+            hasPlaceOrder: bodyText.includes('注文を確定する'),
+            hasPrimeUpsell: bodyText.includes('プライム無料体験'),
+            hasSpinner: !!document.querySelector('.a-spinner-wrapper, .checkout-page-spinner, [data-testid="loading"]'),
+          };
+        });
+        console.log(`[Amazon checkout] Step 2: Poll ${i + 1}:`, JSON.stringify(state));
+
+        if (state.hasPlaceOrder && !state.hasPrimaryBtn) {
+          contentChanged = true;
+          console.log('[Amazon checkout] Step 2: Content changed - place order button appeared');
+          break;
+        }
+        if (state.hasPrimeUpsell) {
+          contentChanged = true;
+          console.log('[Amazon checkout] Step 2: Content changed - Prime upsell appeared');
+          break;
+        }
+        if (state.primaryBtnText && !state.primaryBtnText.includes('このお支払方法を使用')) {
+          contentChanged = true;
+          console.log('[Amazon checkout] Step 2: Content changed - button text changed');
+          break;
+        }
+        if (!state.hasPrimaryBtn && !state.hasSpinner) {
+          contentChanged = true;
+          console.log('[Amazon checkout] Step 2: Content changed - primary button disappeared');
+          break;
+        }
+      }
+
+      if (!contentChanged) {
+        console.log('[Amazon checkout] Step 2: Page content did NOT change after 15 seconds (continuing anyway)');
+      }
+
       await this.takeScreenshot('checkout_step2_after');
+      console.log('[Amazon checkout] Step 2: Completed');
 
       // ---- Step 3: Prime upsell skip (conditional) ----
       console.log('[Amazon checkout] Step 3: Checking for Prime upsell, URL:', this.page.url());
       await this.page.waitForTimeout(2000);
       await this.takeScreenshot('checkout_step3_page');
 
-      // Check if "注文を確定する" is already present (no Prime upsell)
-      const hasPlaceOrder = await this.page.evaluate(() => {
-        return document.body.innerText.includes('注文を確定する');
+      // Diagnostic: log all buttons on current page
+      const step3Buttons = await this.page.evaluate(() => {
+        return Array.from(document.querySelectorAll('input[type="submit"], button, .a-button, [role="button"], a.a-link-normal')).map(el => ({
+          tag: el.tagName,
+          text: (el.textContent || '').trim().substring(0, 60),
+          id: el.id || '',
+          name: el.getAttribute('name') || '',
+          visible: (el as HTMLElement).offsetParent !== null,
+        }));
+      });
+      console.log('[Amazon checkout] Step 3: Page buttons:', JSON.stringify(step3Buttons));
+
+      // Check for order button (visibility-aware)
+      const hasOrderButton = await this.page.evaluate(() => {
+        const buttons = document.querySelectorAll('input[type="submit"], button, .a-button, span');
+        for (const btn of buttons) {
+          const text = (btn.textContent || '').trim();
+          if (text === '注文を確定する') {
+            return (btn as HTMLElement).offsetParent !== null;
+          }
+        }
+        return !!document.getElementById('submitOrderButtonId');
       });
 
-      if (hasPlaceOrder) {
-        console.log('[Amazon checkout] Step 3: No Prime upsell, order button already visible');
+      if (hasOrderButton) {
+        console.log('[Amazon checkout] Step 3: Order button found, skipping Prime check');
       } else {
-        // Prime upsell skip
-        const skipped = await this.page.evaluate(() => {
+        const primeSkipped = await this.page.evaluate(() => {
           const allElements = document.querySelectorAll('a, button, span, input');
           for (const el of allElements) {
             const text = (el.textContent || '').trim();
@@ -341,10 +393,21 @@ export class AmazonAutoOrder extends BaseAutoOrder {
           }
           return false;
         });
-        console.log('[Amazon checkout] Step 3: Prime skip result:', skipped);
-        if (skipped) {
-          await this.page.waitForLoadState('domcontentloaded').catch(() => {});
-          await this.page.waitForTimeout(2000);
+        console.log('[Amazon checkout] Step 3: Prime skip result:', primeSkipped);
+        if (primeSkipped) {
+          // SPA transition: poll for order button
+          for (let i = 0; i < 10; i++) {
+            await this.page.waitForTimeout(1000);
+            const hasOrder = await this.page.evaluate(() => {
+              return document.body.innerText.includes('注文を確定する') || !!document.getElementById('submitOrderButtonId');
+            });
+            if (hasOrder) {
+              console.log('[Amazon checkout] Step 3: Prime skipped, order page loaded');
+              break;
+            }
+          }
+        } else {
+          console.log('[Amazon checkout] Step 3: No Prime upsell detected, continuing');
         }
       }
       await this.takeScreenshot('checkout_step3_after');
@@ -353,41 +416,64 @@ export class AmazonAutoOrder extends BaseAutoOrder {
       // Note: checkout() is only called when autoConfirm=true (see base.ts executeOrder).
       console.log('[Amazon checkout] Step 4: Placing order, URL:', this.page.url());
       await this.page.waitForTimeout(2000);
-      await this.takeScreenshot('checkout_step4_page');
+      await this.takeScreenshot('checkout_step4_before');
+
+      // Diagnostic: log all buttons
+      const step4Buttons = await this.page.evaluate(() => {
+        return Array.from(document.querySelectorAll('input[type="submit"], button, .a-button, [role="button"]')).map(el => ({
+          tag: el.tagName,
+          text: (el.textContent || '').trim().substring(0, 60),
+          id: el.id || '',
+          name: el.getAttribute('name') || '',
+          visible: (el as HTMLElement).offsetParent !== null,
+        }));
+      });
+      console.log('[Amazon checkout] Step 4: Page buttons:', JSON.stringify(step4Buttons));
 
       const orderPlaced = await this.page.evaluate(() => {
-        // By ID
-        const submitBtn = document.querySelector('#submitOrderButtonId input') as HTMLElement;
-        if (submitBtn) { submitBtn.click(); return true; }
+        // Method 1: submitOrderButtonId
+        const submitBtn = document.getElementById('submitOrderButtonId');
+        if (submitBtn) {
+          const input = submitBtn.querySelector('input[type="submit"], input') as HTMLElement;
+          if (input) { input.click(); return true; }
+          (submitBtn as HTMLElement).click();
+          return true;
+        }
 
-        // By name
+        // Method 2: placeYourOrder1
         const byName = document.querySelector('input[name="placeYourOrder1"]') as HTMLElement;
         if (byName) { byName.click(); return true; }
 
-        // By text
-        const allElements = document.querySelectorAll('span, input, button');
+        // Method 3: text match "注文を確定する"
+        const allElements = document.querySelectorAll('span, input[type="submit"], button');
         for (const el of allElements) {
           const text = (el.textContent || '').trim();
           if (text === '注文を確定する') {
-            const clickable = el.closest('.a-button')?.querySelector('input') || el;
-            (clickable as HTMLElement).click();
+            const parent = el.closest('.a-button') || el.parentElement;
+            if (parent) {
+              const parentInput = parent.querySelector('input[type="submit"]') as HTMLElement;
+              if (parentInput) { parentInput.click(); return true; }
+            }
+            (el as HTMLElement).click();
             return true;
           }
         }
+
+        // Method 4: ID pattern match
+        const placeOrderBtn = document.querySelector('[id*="placeOrder"], [id*="place-order"], [id*="submitOrder"]') as HTMLElement;
+        if (placeOrderBtn) {
+          const input = placeOrderBtn.querySelector('input[type="submit"]') as HTMLElement;
+          if (input) { input.click(); return true; }
+          placeOrderBtn.click();
+          return true;
+        }
+
         return false;
       });
       console.log('[Amazon checkout] Step 4: Click result:', orderPlaced);
 
       if (!orderPlaced) {
         console.log('[Amazon checkout] Step 4: FAILED - order button not found');
-        const buttons = await this.page.evaluate(() => {
-          return Array.from(document.querySelectorAll('input[type="submit"], button, .a-button')).map(el => ({
-            text: (el.textContent || '').trim().substring(0, 60),
-            name: el.getAttribute('name'),
-            id: el.id,
-          }));
-        });
-        console.log('[Amazon checkout] Step 4: Available buttons:', JSON.stringify(buttons));
         await this.takeScreenshot('checkout_step4_failed');
         return false;
       }
