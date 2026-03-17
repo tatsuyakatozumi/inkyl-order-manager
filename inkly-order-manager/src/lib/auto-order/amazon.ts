@@ -191,7 +191,7 @@ export class AmazonAutoOrder extends BaseAutoOrder {
       '#sw-atc-confirmation, #huc-v2-order-row-confirm-text, #NATC_SMART_WAGON_CONF_MSG_SUCCESS, #sw-atc-details-single-container',
     );
     const pageText = await this.page.textContent('body') ?? '';
-    const hasConfirmText = pageText.includes('カートに追加されました') || pageText.includes('Cart');
+    const hasConfirmText = pageText.includes('カートに追加されました') || pageText.includes('Cart') || pageText.includes('カート');
 
     const success = confirmation !== null || hasConfirmText;
     console.log('[Amazon] addSingleItemToCart: success:', success);
@@ -202,48 +202,215 @@ export class AmazonAutoOrder extends BaseAutoOrder {
   async checkout(): Promise<boolean> {
     if (!this.page) return false;
     try {
-      console.log('[Amazon] checkout: navigating to cart');
+      // ---- Step 1: Cart page → "レジに進む" ----
+      console.log('[Amazon checkout] Step 1: Navigating to cart page');
       await this.page.goto(this.getCartUrl(), { waitUntil: 'domcontentloaded', timeout: 30000 });
       await this.safeWaitForNetworkIdle();
-      await this.takeScreenshot('checkout_cart');
+      await this.takeScreenshot('checkout_step1_cart');
 
-      console.log('[Amazon] checkout: proceeding to checkout');
-      const checkoutButton = await this.page.$('input[name="proceedToRetailCheckout"]')
-        ?? await this.page.$('#sc-buy-box-ptc-button input');
-      if (!checkoutButton) {
-        console.log('[Amazon] checkout: checkout button not found');
-        await this.takeScreenshot('checkout_no_button');
+      const proceedButton = await this.page.$('input[name="proceedToRetailCheckout"]')
+        ?? await this.page.$('#sc-buy-box-ptc-button input')
+        ?? await this.page.$('input[value="レジに進む"]');
+      if (!proceedButton) {
+        console.log('[Amazon checkout] Step 1: Proceed button not found');
+        await this.takeScreenshot('checkout_step1_no_button');
         return false;
       }
-      await checkoutButton.click();
+      await proceedButton.click();
+      await this.page.waitForLoadState('domcontentloaded');
       await this.page.waitForTimeout(3000);
       await this.safeWaitForNetworkIdle();
-      await this.takeScreenshot('checkout_confirm');
+      await this.takeScreenshot('checkout_step1_proceed');
+      console.log('[Amazon checkout] Step 1: Clicked proceed to checkout, URL:', this.page.url());
 
-      console.log('[Amazon] checkout: placing order');
-      const orderButton = await this.page.$('#submitOrderButtonId input')
-        ?? await this.page.$('input[name="placeYourOrder1"]');
+      // ---- Step 2: "このお支払方法を使用" ----
+      console.log('[Amazon checkout] Step 2: Looking for payment method button');
+      let paymentClicked = false;
+
+      const paymentInput = await this.page.$('input[name="ppw-widgetEvent:SetPaymentPlanSelectContinueEvent"]')
+        ?? await this.page.$('[name="ppw-widgetEvent:SetPaymentPlanSelectContinueEvent"]');
+      if (paymentInput) {
+        await paymentInput.click();
+        paymentClicked = true;
+      }
+
+      if (!paymentClicked) {
+        const primaryBtn = await this.page.$('.a-button-primary span:has-text("このお支払方法を使用")');
+        if (primaryBtn) {
+          await primaryBtn.click();
+          paymentClicked = true;
+        }
+      }
+
+      if (!paymentClicked) {
+        try {
+          const roleBtn = this.page.getByRole('button', { name: 'このお支払方法を使用' });
+          if (await roleBtn.count() > 0) {
+            await roleBtn.first().click();
+            paymentClicked = true;
+          }
+        } catch {
+          // getByRole fallback failed
+        }
+      }
+
+      if (!paymentClicked) {
+        const spanLocator = this.page.locator('span').filter({ hasText: 'このお支払方法を使用' }).first();
+        if (await spanLocator.count() > 0) {
+          await spanLocator.click();
+          paymentClicked = true;
+        }
+      }
+
+      if (paymentClicked) {
+        console.log('[Amazon checkout] Step 2: Clicked use this payment method');
+        await this.page.waitForLoadState('domcontentloaded');
+        await this.page.waitForTimeout(3000);
+        await this.safeWaitForNetworkIdle();
+      } else {
+        // Payment button may not appear if payment is already selected
+        console.log('[Amazon checkout] Step 2: Payment method button not found, may already be selected');
+      }
+      await this.takeScreenshot('checkout_step2_payment');
+      console.log('[Amazon checkout] Step 2: Done, URL:', this.page.url());
+
+      // ---- Step 3: Prime upsell skip (conditional) ----
+      console.log('[Amazon checkout] Step 3: Checking for Prime upsell page');
+      let orderButtonFound = false;
+      try {
+        await this.page.waitForSelector(
+          '#submitOrderButtonId input[type="submit"], input[name="placeYourOrder1"], #submitOrderButtonId .a-button-input',
+          { timeout: 5000 },
+        );
+        orderButtonFound = true;
+      } catch {
+        // Order button not found within 5s — likely Prime upsell page
+      }
+
+      if (orderButtonFound) {
+        console.log('[Amazon checkout] Step 3: No Prime upsell, proceeding directly');
+      } else {
+        console.log('[Amazon checkout] Step 3: Prime upsell detected, clicking skip');
+        let primeSkipped = false;
+
+        const skipLink = await this.page.$('a:has-text("プライム無料体験を試さないで注文を続ける")')
+          ?? await this.page.$('button:has-text("プライム無料体験を試さないで注文を続ける")');
+        if (skipLink) {
+          await skipLink.click();
+          primeSkipped = true;
+        }
+
+        if (!primeSkipped) {
+          const skipLocator = this.page.locator('text=プライム無料体験を試さないで注文を続ける').first();
+          if (await skipLocator.count() > 0) {
+            await skipLocator.click();
+            primeSkipped = true;
+          }
+        }
+
+        if (!primeSkipped) {
+          const partialMatch = await this.page.$('a:has-text("試さないで")');
+          if (partialMatch) {
+            await partialMatch.click();
+            primeSkipped = true;
+          }
+        }
+
+        if (primeSkipped) {
+          await this.page.waitForLoadState('domcontentloaded');
+          await this.page.waitForTimeout(3000);
+          await this.safeWaitForNetworkIdle();
+          console.log('[Amazon checkout] Step 3: Prime upsell skipped');
+        } else {
+          console.log('[Amazon checkout] Step 3: Could not find Prime skip button');
+        }
+      }
+      await this.takeScreenshot('checkout_step3_prime_skip');
+
+      // ---- Step 4: "注文を確定する" ----
+      // Note: checkout() is only called when autoConfirm=true (see base.ts executeOrder).
+      console.log('[Amazon checkout] Step 4: Looking for place order button');
+      let orderButton = await this.page.$('#submitOrderButtonId input[type="submit"]')
+        ?? await this.page.$('input[name="placeYourOrder1"]')
+        ?? await this.page.$('#submitOrderButtonId .a-button-input')
+        ?? await this.page.$('input[aria-labelledby="submitOrderButtonId-announce"]');
+
       if (!orderButton) {
-        console.log('[Amazon] checkout: order button not found');
-        await this.takeScreenshot('checkout_no_order_button');
+        try {
+          const roleBtn = this.page.getByRole('button', { name: '注文を確定する' });
+          if (await roleBtn.count() > 0) {
+            await roleBtn.first().click();
+            console.log('[Amazon checkout] Step 4: Clicked place order via getByRole');
+            await this.page.waitForTimeout(5000);
+            await this.safeWaitForNetworkIdle();
+            await this.takeScreenshot('checkout_step4_place_order');
+            // Skip to step 5
+            return this.verifyOrderCompletion();
+          }
+        } catch {
+          // getByRole fallback failed
+        }
+
+        // Final fallback: span text match
+        const spanLocator = this.page.locator('span').filter({ hasText: '注文を確定する' }).first();
+        if (await spanLocator.count() > 0) {
+          await spanLocator.click();
+          console.log('[Amazon checkout] Step 4: Clicked place order via span locator');
+          await this.page.waitForTimeout(5000);
+          await this.safeWaitForNetworkIdle();
+          await this.takeScreenshot('checkout_step4_place_order');
+          return this.verifyOrderCompletion();
+        }
+
+        console.log('[Amazon checkout] Step 4: Place order button not found');
+        await this.takeScreenshot('checkout_step4_no_button');
         return false;
       }
+
       await orderButton.click();
+      console.log('[Amazon checkout] Step 4: Clicked place order');
       await this.page.waitForTimeout(5000);
       await this.safeWaitForNetworkIdle();
-      await this.takeScreenshot('checkout_complete');
+      await this.takeScreenshot('checkout_step4_place_order');
 
-      const pageText = await this.page.textContent('body') ?? '';
-      const isComplete = pageText.includes('注文が確定しました')
-        || pageText.includes('ご注文ありがとうございます')
-        || (await this.page.$('.a-box.a-alert-success, #orderDetails')) !== null;
-
-      console.log('[Amazon] checkout: complete:', isComplete);
-      return isComplete;
+      // ---- Step 5: Verify order completion ----
+      return this.verifyOrderCompletion();
     } catch (e) {
-      console.error('[Amazon] checkout error:', e);
+      console.error('[Amazon checkout] Error:', e);
       await this.takeScreenshot('checkout_error');
       return false;
     }
+  }
+
+  /** Verify that the order was placed successfully after clicking the place-order button. */
+  private async verifyOrderCompletion(): Promise<boolean> {
+    if (!this.page) return false;
+
+    const pageText = await this.page.textContent('body') ?? '';
+    const currentUrl = this.page.url().toLowerCase();
+
+    const textComplete = pageText.includes('注文が確定しました')
+      || pageText.includes('ご注文ありがとうございます');
+    const elementComplete = (await this.page.$('.a-box.a-alert-success, #orderDetails')) !== null;
+    const urlComplete = currentUrl.includes('thankyou') || currentUrl.includes('confirmation');
+
+    const isComplete = textComplete || elementComplete || urlComplete;
+
+    // Try to extract order number (non-fatal if not found)
+    const orderNumberMatch = pageText.match(/注文番号[：:\s]*([A-Z0-9-]+)/);
+    if (orderNumberMatch) {
+      console.log('[Amazon checkout] Order number:', orderNumberMatch[1]);
+    }
+
+    await this.takeScreenshot('checkout_complete');
+
+    if (isComplete) {
+      console.log('[Amazon checkout] Order completed successfully.',
+        orderNumberMatch ? `Order number: ${orderNumberMatch[1]}` : '(order number not found)');
+    } else {
+      console.log('[Amazon checkout] Order completion could not be verified. URL:', this.page.url());
+    }
+
+    return isComplete;
   }
 }
