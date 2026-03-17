@@ -225,57 +225,112 @@ export class AmazonAutoOrder extends BaseAutoOrder {
 
       // ---- Step 2: "このお支払方法を使用" ----
       console.log('[Amazon checkout] Step 2: Looking for payment method button');
+      await this.takeScreenshot('checkout_step2_before');
+      await this.page.waitForTimeout(5000); // Wait for dynamic rendering
+
       let paymentClicked = false;
 
-      const paymentInput = await this.page.$('input[name="ppw-widgetEvent:SetPaymentPlanSelectContinueEvent"]')
-        ?? await this.page.$('[name="ppw-widgetEvent:SetPaymentPlanSelectContinueEvent"]');
-      if (paymentInput) {
-        await paymentInput.click();
-        paymentClicked = true;
-      }
-
-      if (!paymentClicked) {
-        const primaryBtn = await this.page.$('.a-button-primary span:has-text("このお支払方法を使用")');
-        if (primaryBtn) {
-          await primaryBtn.click();
-          paymentClicked = true;
+      // Strategy A: JS evaluate to bypass Playwright visibility checks
+      try {
+        paymentClicked = await this.page.evaluate(() => {
+          const spans = Array.from(document.querySelectorAll('span, input, button, a'));
+          for (const el of spans) {
+            const text = el.textContent?.trim() || el.getAttribute('value') || '';
+            if (text.includes('このお支払方法を使用') || text.includes('続行')) {
+              const clickTarget = el.closest('.a-button') || el.closest('form')?.querySelector('input[type="submit"]') || el;
+              (clickTarget as HTMLElement).click();
+              return true;
+            }
+          }
+          const submitBtn = document.querySelector('input[name*="SetPaymentPlanSelectContinueEvent"]') as HTMLElement;
+          if (submitBtn) {
+            submitBtn.click();
+            return true;
+          }
+          return false;
+        });
+        if (paymentClicked) {
+          console.log('[Amazon checkout] Step 2: Clicked via JS evaluate');
         }
+      } catch (e) {
+        console.log('[Amazon checkout] Step 2: JS evaluate failed:', (e as Error).message);
       }
 
+      // Strategy B: Playwright force click (skip visibility check)
       if (!paymentClicked) {
         try {
-          const roleBtn = this.page.getByRole('button', { name: 'このお支払方法を使用' });
-          if (await roleBtn.count() > 0) {
-            await roleBtn.first().click();
-            paymentClicked = true;
+          const paymentSelectors = [
+            'input[name*="SetPaymentPlanSelectContinueEvent"]',
+            '[name*="SetPaymentPlanSelectContinueEvent"]',
+            '.a-button-primary .a-button-input',
+          ];
+          for (const selector of paymentSelectors) {
+            const el = this.page.locator(selector).first();
+            if (await el.count() > 0) {
+              await el.scrollIntoViewIfNeeded().catch(() => {});
+              await el.click({ force: true, timeout: 5000 });
+              paymentClicked = true;
+              console.log(`[Amazon checkout] Step 2: Force-clicked ${selector}`);
+              break;
+            }
           }
-        } catch {
-          // getByRole fallback failed
+        } catch (e) {
+          console.log('[Amazon checkout] Step 2: Force click failed:', (e as Error).message);
+        }
+      }
+
+      // Strategy C: Position-based search for large yellow button near top of page
+      if (!paymentClicked) {
+        try {
+          paymentClicked = await this.page.evaluate(() => {
+            const buttons = document.querySelectorAll('.a-button-primary');
+            for (const btn of buttons) {
+              const rect = btn.getBoundingClientRect();
+              if (rect.width > 200 && rect.top < 500) {
+                const input = btn.querySelector('input') || btn.querySelector('span');
+                if (input) {
+                  (input as HTMLElement).click();
+                  return true;
+                }
+              }
+            }
+            return false;
+          });
+          if (paymentClicked) {
+            console.log('[Amazon checkout] Step 2: Clicked via position-based search');
+          }
+        } catch (e) {
+          console.log('[Amazon checkout] Step 2: Position-based click failed:', (e as Error).message);
         }
       }
 
       if (!paymentClicked) {
-        const spanLocator = this.page.locator('span').filter({ hasText: 'このお支払方法を使用' }).first();
-        if (await spanLocator.count() > 0) {
-          await spanLocator.click();
-          paymentClicked = true;
-        }
+        console.log('[Amazon checkout] Step 2: All strategies failed');
+        await this.takeScreenshot('checkout_step2_failed');
+        const bodyButtons = await this.page.evaluate(() => {
+          const buttons = document.querySelectorAll('.a-button, input[type="submit"], button');
+          return Array.from(buttons).map(b => ({
+            tag: b.tagName,
+            text: b.textContent?.trim().substring(0, 50),
+            class: b.className.substring(0, 80),
+            name: b.getAttribute('name'),
+            visible: (b as HTMLElement).offsetParent !== null,
+            rect: b.getBoundingClientRect(),
+          }));
+        });
+        console.log('[Amazon checkout] Step 2: Page buttons:', JSON.stringify(bodyButtons, null, 2));
+        return false;
       }
 
-      if (paymentClicked) {
-        console.log('[Amazon checkout] Step 2: Clicked use this payment method');
-        await this.page.waitForLoadState('domcontentloaded');
-        await this.page.waitForTimeout(3000);
-        await this.safeWaitForNetworkIdle();
-      } else {
-        // Payment button may not appear if payment is already selected
-        console.log('[Amazon checkout] Step 2: Payment method button not found, may already be selected');
-      }
+      await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+      await this.page.waitForTimeout(3000);
       await this.takeScreenshot('checkout_step2_payment');
-      console.log('[Amazon checkout] Step 2: Done, URL:', this.page.url());
+      console.log('[Amazon checkout] Step 2: Payment method confirmed, URL:', this.page.url());
 
       // ---- Step 3: Prime upsell skip (conditional) ----
       console.log('[Amazon checkout] Step 3: Checking for Prime upsell page');
+      await this.page.waitForTimeout(3000);
+
       let orderButtonFound = false;
       try {
         await this.page.waitForSelector(
@@ -293,31 +348,40 @@ export class AmazonAutoOrder extends BaseAutoOrder {
         console.log('[Amazon checkout] Step 3: Prime upsell detected, clicking skip');
         let primeSkipped = false;
 
-        const skipLink = await this.page.$('a:has-text("プライム無料体験を試さないで注文を続ける")')
-          ?? await this.page.$('button:has-text("プライム無料体験を試さないで注文を続ける")');
-        if (skipLink) {
-          await skipLink.click();
-          primeSkipped = true;
-        }
-
-        if (!primeSkipped) {
-          const skipLocator = this.page.locator('text=プライム無料体験を試さないで注文を続ける').first();
-          if (await skipLocator.count() > 0) {
-            await skipLocator.click();
-            primeSkipped = true;
+        // Try JS evaluate first (visibility bypass)
+        try {
+          primeSkipped = await this.page.evaluate(() => {
+            const links = Array.from(document.querySelectorAll('a, button, span'));
+            for (const el of links) {
+              const text = el.textContent?.trim() || '';
+              if (text.includes('プライム無料体験を試さないで') || text.includes('試さないで')) {
+                (el as HTMLElement).click();
+                return true;
+              }
+            }
+            return false;
+          });
+          if (primeSkipped) {
+            console.log('[Amazon checkout] Step 3: Skipped via JS evaluate');
           }
+        } catch (e) {
+          console.log('[Amazon checkout] Step 3: JS evaluate failed:', (e as Error).message);
         }
 
+        // Fallback: Playwright force click
         if (!primeSkipped) {
-          const partialMatch = await this.page.$('a:has-text("試さないで")');
-          if (partialMatch) {
-            await partialMatch.click();
+          const skipLink = await this.page.$('a:has-text("プライム無料体験を試さないで注文を続ける")')
+            ?? await this.page.$('button:has-text("プライム無料体験を試さないで注文を続ける")')
+            ?? await this.page.$('a:has-text("試さないで")');
+          if (skipLink) {
+            await skipLink.click({ force: true }).catch(() => {});
             primeSkipped = true;
+            console.log('[Amazon checkout] Step 3: Skipped via force click');
           }
         }
 
         if (primeSkipped) {
-          await this.page.waitForLoadState('domcontentloaded');
+          await this.page.waitForLoadState('domcontentloaded').catch(() => {});
           await this.page.waitForTimeout(3000);
           await this.safeWaitForNetworkIdle();
           console.log('[Amazon checkout] Step 3: Prime upsell skipped');
@@ -330,45 +394,94 @@ export class AmazonAutoOrder extends BaseAutoOrder {
       // ---- Step 4: "注文を確定する" ----
       // Note: checkout() is only called when autoConfirm=true (see base.ts executeOrder).
       console.log('[Amazon checkout] Step 4: Looking for place order button');
-      let orderButton = await this.page.$('#submitOrderButtonId input[type="submit"]')
-        ?? await this.page.$('input[name="placeYourOrder1"]')
-        ?? await this.page.$('#submitOrderButtonId .a-button-input')
-        ?? await this.page.$('input[aria-labelledby="submitOrderButtonId-announce"]');
+      await this.page.waitForTimeout(3000);
 
-      if (!orderButton) {
+      let orderClicked = false;
+
+      // Strategy A: JS evaluate (visibility bypass)
+      try {
+        orderClicked = await this.page.evaluate(() => {
+          // Try submit button by ID first
+          const submitInput = document.querySelector('#submitOrderButtonId input[type="submit"]')
+            || document.querySelector('input[name="placeYourOrder1"]')
+            || document.querySelector('#submitOrderButtonId .a-button-input')
+            || document.querySelector('input[aria-labelledby="submitOrderButtonId-announce"]');
+          if (submitInput) {
+            (submitInput as HTMLElement).click();
+            return true;
+          }
+          // Search by text
+          const spans = Array.from(document.querySelectorAll('span, input, button'));
+          for (const el of spans) {
+            const text = el.textContent?.trim() || el.getAttribute('value') || '';
+            if (text.includes('注文を確定する')) {
+              const clickTarget = el.closest('.a-button') || el;
+              (clickTarget as HTMLElement).click();
+              return true;
+            }
+          }
+          return false;
+        });
+        if (orderClicked) {
+          console.log('[Amazon checkout] Step 4: Clicked place order via JS evaluate');
+        }
+      } catch (e) {
+        console.log('[Amazon checkout] Step 4: JS evaluate failed:', (e as Error).message);
+      }
+
+      // Strategy B: Playwright force click
+      if (!orderClicked) {
+        const selectors = [
+          '#submitOrderButtonId input[type="submit"]',
+          'input[name="placeYourOrder1"]',
+          '#submitOrderButtonId .a-button-input',
+          'input[aria-labelledby="submitOrderButtonId-announce"]',
+        ];
+        for (const selector of selectors) {
+          try {
+            const el = this.page.locator(selector).first();
+            if (await el.count() > 0) {
+              await el.scrollIntoViewIfNeeded().catch(() => {});
+              await el.click({ force: true, timeout: 5000 });
+              orderClicked = true;
+              console.log(`[Amazon checkout] Step 4: Force-clicked ${selector}`);
+              break;
+            }
+          } catch {
+            // try next selector
+          }
+        }
+      }
+
+      // Strategy C: getByRole / span locator
+      if (!orderClicked) {
         try {
           const roleBtn = this.page.getByRole('button', { name: '注文を確定する' });
           if (await roleBtn.count() > 0) {
-            await roleBtn.first().click();
+            await roleBtn.first().click({ force: true });
+            orderClicked = true;
             console.log('[Amazon checkout] Step 4: Clicked place order via getByRole');
-            await this.page.waitForTimeout(5000);
-            await this.safeWaitForNetworkIdle();
-            await this.takeScreenshot('checkout_step4_place_order');
-            // Skip to step 5
-            return this.verifyOrderCompletion();
           }
         } catch {
-          // getByRole fallback failed
+          // fallback
         }
+      }
 
-        // Final fallback: span text match
+      if (!orderClicked) {
         const spanLocator = this.page.locator('span').filter({ hasText: '注文を確定する' }).first();
         if (await spanLocator.count() > 0) {
-          await spanLocator.click();
+          await spanLocator.click({ force: true });
+          orderClicked = true;
           console.log('[Amazon checkout] Step 4: Clicked place order via span locator');
-          await this.page.waitForTimeout(5000);
-          await this.safeWaitForNetworkIdle();
-          await this.takeScreenshot('checkout_step4_place_order');
-          return this.verifyOrderCompletion();
         }
+      }
 
+      if (!orderClicked) {
         console.log('[Amazon checkout] Step 4: Place order button not found');
         await this.takeScreenshot('checkout_step4_no_button');
         return false;
       }
 
-      await orderButton.click();
-      console.log('[Amazon checkout] Step 4: Clicked place order');
       await this.page.waitForTimeout(5000);
       await this.safeWaitForNetworkIdle();
       await this.takeScreenshot('checkout_step4_place_order');
