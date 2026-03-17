@@ -356,7 +356,7 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
       return true;
     }
 
-    if (['ご注文完了', 'ご注文ありがとう', 'ご注文を承りました'].some(kw => bodyText.includes(kw))) {
+    if (['ご注文完了', 'ご注文の完了', 'ご注文ありがとう', 'ご注文を承りました'].some(kw => bodyText.includes(kw))) {
       console.log('[MonotaRO] isCompletionPage: strong text indicates completion');
       return true;
     }
