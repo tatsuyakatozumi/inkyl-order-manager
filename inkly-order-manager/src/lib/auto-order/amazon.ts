@@ -359,31 +359,61 @@ export class AmazonAutoOrder extends BaseAutoOrder {
   private async clickPrimeSkip(): Promise<boolean> {
     if (!this.page) return false;
 
-    // Full text match
+    // Scroll the skip link into view first
     try {
-      const fullMatch = this.page.locator('a, button, span').filter({ hasText: 'プライム無料体験を試さないで注文を続ける' }).first();
+      await this.page.evaluate(() => {
+        const allElements = document.querySelectorAll('a, button, span');
+        for (const el of allElements) {
+          const text = (el.textContent || '').trim();
+          if (text.includes('試さないで注文を続ける') || text.includes('試さないで')) {
+            el.scrollIntoView({ behavior: 'instant', block: 'center' });
+            return;
+          }
+        }
+      });
+      await this.page.waitForTimeout(500);
+    } catch {
+      // scroll attempt failed, continue anyway
+    }
+
+    // Full text match — mouse.click
+    try {
+      const fullMatch = this.page.locator('a, button, span').filter({ hasText: '試さないで注文を続ける' }).first();
       if (await fullMatch.count() > 0) {
+        const box = await fullMatch.boundingBox();
+        if (box) {
+          await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+          console.log(`[Amazon checkout] PRIME_UPSELL: mouse.click at (${box.x + box.width / 2}, ${box.y + box.height / 2})`);
+          return true;
+        }
+        // boundingBox null — fallback to force click
         await fullMatch.click({ force: true, timeout: 5000 });
-        console.log('[Amazon checkout] PRIME_UPSELL: Clicked full text match');
+        console.log('[Amazon checkout] PRIME_UPSELL: Fallback force-click on full match');
         return true;
       }
     } catch (e) {
       console.log('[Amazon checkout] PRIME_UPSELL: Full text click failed:', (e as Error).message);
     }
 
-    // Partial text match
+    // Partial text match — mouse.click
     try {
       const partialMatch = this.page.locator('a, button, span').filter({ hasText: '試さないで' }).first();
       if (await partialMatch.count() > 0) {
+        const box = await partialMatch.boundingBox();
+        if (box) {
+          await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+          console.log(`[Amazon checkout] PRIME_UPSELL: mouse.click partial at (${box.x + box.width / 2}, ${box.y + box.height / 2})`);
+          return true;
+        }
         await partialMatch.click({ force: true, timeout: 5000 });
-        console.log('[Amazon checkout] PRIME_UPSELL: Clicked partial text match');
+        console.log('[Amazon checkout] PRIME_UPSELL: Fallback force-click on partial match');
         return true;
       }
     } catch (e) {
       console.log('[Amazon checkout] PRIME_UPSELL: Partial text click failed:', (e as Error).message);
     }
 
-    console.log('[Amazon checkout] PRIME_UPSELL: All selectors failed');
+    console.log('[Amazon checkout] PRIME_UPSELL: All methods failed');
     return false;
   }
 
@@ -397,7 +427,7 @@ export class AmazonAutoOrder extends BaseAutoOrder {
     ], 'PLACE_ORDER');
   }
 
-  /** Try clicking selectors in order using Playwright trusted force-click. */
+  /** Try clicking selectors: scrollIntoView → getBoundingBox → mouse.click, with force-click fallback. */
   private async tryClickSelectors(selectors: string[], stateName: string): Promise<boolean> {
     if (!this.page) return false;
 
@@ -405,9 +435,18 @@ export class AmazonAutoOrder extends BaseAutoOrder {
       try {
         const el = this.page.locator(selector).first();
         if (await el.count() > 0) {
-          await el.click({ force: true, timeout: 5000 });
-          console.log(`[Amazon checkout] ${stateName}: Clicked ${selector}`);
-          return true;
+          // Primary: coordinate-based mouse.click
+          const clicked = await this.clickByCoordinates(selector, stateName);
+          if (clicked) return true;
+
+          // Fallback: Playwright force-click
+          try {
+            await el.click({ force: true, timeout: 5000 });
+            console.log(`[Amazon checkout] ${stateName}: Fallback force-click on ${selector}`);
+            return true;
+          } catch (e) {
+            console.log(`[Amazon checkout] ${stateName}: Fallback force-click failed: ${(e as Error).message}`);
+          }
         }
       } catch (e) {
         console.log(`[Amazon checkout] ${stateName}: ${selector} failed: ${(e as Error).message}`);
@@ -416,6 +455,40 @@ export class AmazonAutoOrder extends BaseAutoOrder {
 
     console.log(`[Amazon checkout] ${stateName}: All selectors failed`);
     return false;
+  }
+
+  /** scrollIntoView → getBoundingBox → mouse.click at element center. */
+  private async clickByCoordinates(selector: string, stateName: string): Promise<boolean> {
+    if (!this.page) return false;
+    try {
+      // Step 1: Scroll element into viewport
+      await this.page.evaluate((sel: string) => {
+        const el = document.querySelector(sel);
+        if (el) {
+          el.scrollIntoView({ behavior: 'instant', block: 'center' });
+        }
+      }, selector);
+      await this.page.waitForTimeout(500);
+
+      // Step 2: Get bounding box
+      const box = await this.page.locator(selector).first().boundingBox();
+      if (!box) {
+        console.log(`[Amazon checkout] ${stateName}: ${selector} — boundingBox is null`);
+        return false;
+      }
+
+      console.log(`[Amazon checkout] ${stateName}: ${selector} — box: x=${box.x}, y=${box.y}, w=${box.width}, h=${box.height}`);
+
+      // Step 3: Click at element center
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      await this.page.mouse.click(x, y);
+      console.log(`[Amazon checkout] ${stateName}: mouse.click at (${x}, ${y}) on ${selector}`);
+      return true;
+    } catch (e) {
+      console.log(`[Amazon checkout] ${stateName}: clickByCoordinates failed for ${selector}: ${(e as Error).message}`);
+      return false;
+    }
   }
 
   /** Poll until the checkout state changes from previousState (SPA-aware). */
