@@ -343,6 +343,25 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
       // Handle inline login if session expired during checkout
       await this.handleCheckoutLoginIfNeeded();
 
+      // After login, if still on cart page, re-click "レジへ進む"
+      const afterLoginUrl = this.page.url();
+      if (afterLoginUrl.includes('basket') || afterLoginUrl.includes('showListServlet') || afterLoginUrl.includes('/cart')) {
+        console.log('[MonotaRO] checkout: still on cart page after login, re-clicking レジへ進む');
+        const reClicked = await this.clickElementByText(
+          ['a:has-text("レジへ進む")', 'button:has-text("レジへ進む")', 'input[value*="レジへ進む"]'],
+          'レジへ進む',
+        );
+        if (reClicked) {
+          await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+          await this.page.waitForTimeout(3000);
+          console.log('[MonotaRO] checkout: after re-click レジへ進む, URL:', this.page.url());
+          await this.takeScreenshot('checkout_after_reclick_proceed');
+
+          // May need login again after re-click
+          await this.handleCheckoutLoginIfNeeded();
+        }
+      }
+
       // Step 3: Navigate through intermediate pages until we reach the confirmation page
       // MonotaRO may show delivery/payment selection pages before the final confirmation
       const MAX_INTERMEDIATE_PAGES = 5;
@@ -351,6 +370,22 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
         const bodyText = await this.page.textContent('body') ?? '';
 
         console.log(`[MonotaRO] checkout: Step 3 iteration ${i + 1}, URL: ${currentUrl}`);
+
+        // If still on cart page, try clicking "レジへ進む" again
+        const stillOnCart = currentUrl.includes('basket') || currentUrl.includes('showListServlet') || currentUrl.includes('/cart');
+        if (stillOnCart) {
+          console.log('[MonotaRO] checkout: still on cart page in loop, trying レジへ進む again');
+          const reClicked = await this.clickElementByText(
+            ['a:has-text("レジへ進む")', 'button:has-text("レジへ進む")', 'input[value*="レジへ進む"]'],
+            'レジへ進む',
+          );
+          if (reClicked) {
+            await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+            await this.page.waitForTimeout(3000);
+            await this.handleCheckoutLoginIfNeeded();
+          }
+          continue;
+        }
 
         // Check if we're on the final confirmation page
         if (bodyText.includes('ご注文内容の確定') || bodyText.includes('まだご注文は確定していません')) {
@@ -461,27 +496,41 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
 
   /** Check if the current page indicates order completion. */
   private isCompletionPage(url: string, bodyText: string): boolean {
+    // Guard: if still on cart page, it's definitely NOT completion
+    const isCartPage = url.includes('basket') || url.includes('showListServlet') || url.includes('/cart');
+    if (isCartPage) {
+      console.log('[MonotaRO] isCompletionPage: still on cart page, NOT complete');
+      return false;
+    }
+
     const urlLower = url.toLowerCase();
     const urlIndicatesComplete = ['complete', 'finish', 'thankyou', 'done', 'order_finish'].some(
       (kw) => urlLower.includes(kw),
     );
     if (urlIndicatesComplete) {
       console.log('[MonotaRO] isCompletionPage: URL indicates completion');
+      return true;
     }
 
-    const textIndicatesComplete = ['ご注文完了', 'ご注文ありがとう', '注文番号', 'ご注文を承りました'].some(
-      (kw) => bodyText.includes(kw),
-    );
-    if (textIndicatesComplete) {
-      console.log('[MonotaRO] isCompletionPage: page text indicates completion');
+    // Strong text indicators (these only appear on completion pages)
+    const strongTextIndicators = ['ご注文完了', 'ご注文ありがとう', 'ご注文を承りました'];
+    const hasStrongText = strongTextIndicators.some((kw) => bodyText.includes(kw));
+    if (hasStrongText) {
+      console.log('[MonotaRO] isCompletionPage: strong text indicates completion');
+      return true;
     }
 
-    const urlChangedFromConfirm = !url.includes('checkout.confirm');
-    if (urlChangedFromConfirm && (urlIndicatesComplete || textIndicatesComplete)) {
-      console.log('[MonotaRO] isCompletionPage: URL changed from confirmation page');
+    // Weak indicator: "注文番号" alone is NOT enough (appears on cart/order history too)
+    // Only count it if combined with other signals (e.g., URL changed from checkout flow)
+    const isCheckoutFlow = url.includes('checkout') || url.includes('order');
+    const hasOrderNumber = bodyText.includes('注文番号');
+    if (hasOrderNumber && isCheckoutFlow) {
+      console.log('[MonotaRO] isCompletionPage: order number + checkout URL indicates completion');
+      return true;
     }
 
-    return urlIndicatesComplete || textIndicatesComplete;
+    console.log('[MonotaRO] isCompletionPage: no completion indicators found');
+    return false;
   }
 
   /** Handle inline login if it appears during checkout. */
