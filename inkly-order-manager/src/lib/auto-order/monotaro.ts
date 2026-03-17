@@ -1,6 +1,7 @@
 import { BaseAutoOrder } from './base';
 
 const MONOTARO_BASE_URL = 'https://www.monotaro.com';
+const CHECKOUT_URL = `${MONOTARO_BASE_URL}/monotaroMain.py?func=monotaro.checkout.confirm.show_init_edit_servlet.ShowInitEditServlet`;
 
 export class MonotaroAutoOrder extends BaseAutoOrder {
   constructor() {
@@ -38,13 +39,37 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
   async isLoggedIn(): Promise<boolean> {
     if (!this.page) return false;
     try {
-      const hasLoginLink = await this.page.locator('a:has-text("ログイン")').first().count() > 0;
       const hasLogoutLink = await this.page.locator('a:has-text("ログアウト")').first().count() > 0;
       const hasUserInfo = await this.page.locator('.LoginUserName, .user-name, [class*="userName"]').first().count() > 0;
 
-      const isLoggedIn = !hasLoginLink || hasLogoutLink || hasUserInfo;
-      console.log(`[MonotaRO] isLoggedIn: loginLink=${hasLoginLink}, logoutLink=${hasLogoutLink}, userInfo=${hasUserInfo} → ${isLoggedIn}`);
-      return isLoggedIn;
+      // Require a POSITIVE indicator of login (logout link or user info)
+      // Absence of login link alone is unreliable (some pages just don't show it)
+      const isLoggedIn = hasLogoutLink || hasUserInfo;
+      console.log(`[MonotaRO] isLoggedIn: logoutLink=${hasLogoutLink}, userInfo=${hasUserInfo} → ${isLoggedIn}`);
+
+      if (!isLoggedIn) {
+        // Secondary check: look for account-related elements
+        const hasMyPage = await this.page.locator('a[href*="/mypage/"]').first().count() > 0;
+        const hasOrderHistory = await this.page.locator('a:has-text("ご購入履歴")').first().count() > 0;
+        // Check if login link is ABSENT from header area (not cart page login section)
+        const headerLoginCount = await this.page.evaluate(() => {
+          const headerArea = document.querySelector('#headerArea, header, .header, .Header');
+          if (!headerArea) return 0;
+          const links = headerArea.querySelectorAll('a');
+          let count = 0;
+          for (const link of links) {
+            if (link.textContent?.includes('ログイン') && !link.textContent?.includes('ログアウト')) {
+              count++;
+            }
+          }
+          return count;
+        });
+        const secondaryLoggedIn = hasMyPage && hasOrderHistory && headerLoginCount === 0;
+        console.log(`[MonotaRO] isLoggedIn secondary: myPage=${hasMyPage}, orderHistory=${hasOrderHistory}, headerLoginCount=${headerLoginCount} → ${secondaryLoggedIn}`);
+        return secondaryLoggedIn;
+      }
+
+      return true;
     } catch (e) {
       console.log('[MonotaRO] isLoggedIn: error:', (e as Error).message);
       return false;
@@ -66,216 +91,221 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
     if (!this.page) return false;
     try {
       console.log('[MonotaRO] login: starting');
-      console.log('[MonotaRO] login: current URL:', this.page.url());
-      console.log('[MonotaRO] login: username length:', credentials.username?.length || 0);
-      console.log('[MonotaRO] login: password length:', credentials.password?.length || 0);
 
-      // Navigate to login page directly
+      // Navigate to login page
       await this.page.goto(`${MONOTARO_BASE_URL}/login/`, {
         waitUntil: 'domcontentloaded',
         timeout: 30000,
       });
-      console.log('[MonotaRO] login: navigated to login page, URL:', this.page.url());
+      console.log('[MonotaRO] login: URL:', this.page.url());
       await this.page.waitForTimeout(2000);
       await this.takeScreenshot('login_page');
 
-      // Find userId field
-      const userIdSelectors = [
-        'input[name="userId"]',
-        'input[name="loginId"]',
-        'input[id="userId"]',
-        'input[id="loginId"]',
-        'input[type="email"]',
-        'input[type="text"][autocomplete="username"]',
-      ];
-
-      let userIdField = null;
-      for (const selector of userIdSelectors) {
-        const el = this.page.locator(selector).first();
-        if (await el.count() > 0) {
-          userIdField = el;
-          console.log(`[MonotaRO] login: found userId field: ${selector}`);
-          break;
-        }
-      }
-
-      if (!userIdField) {
-        console.log('[MonotaRO] login: userId field NOT FOUND');
-        const inputs = await this.page.evaluate(() => {
-          return Array.from(document.querySelectorAll('input')).map(el => ({
-            name: el.getAttribute('name'),
-            id: el.id,
-            type: el.type,
-            placeholder: el.placeholder,
-            visible: (el as HTMLElement).offsetParent !== null,
-          }));
-        });
-        console.log('[MonotaRO] login: page inputs:', JSON.stringify(inputs));
-        await this.takeScreenshot('login_no_userid_field');
+      // Fill credentials
+      const filled = await this.fillLoginForm(credentials);
+      if (!filled) {
+        console.log('[MonotaRO] login: could not fill login form');
         return false;
       }
 
-      await userIdField.fill(credentials.username);
-      console.log('[MonotaRO] login: filled userId');
-
-      // Find password field
-      const passwordSelectors = [
-        'input[name="password"]',
-        'input[id="password"]',
-        'input[type="password"]',
-      ];
-
-      let passwordField = null;
-      for (const selector of passwordSelectors) {
-        const el = this.page.locator(selector).first();
-        if (await el.count() > 0) {
-          passwordField = el;
-          console.log(`[MonotaRO] login: found password field: ${selector}`);
-          break;
-        }
-      }
-
-      if (!passwordField) {
-        console.log('[MonotaRO] login: password field NOT FOUND');
-        await this.takeScreenshot('login_no_password_field');
+      // Try multiple submission strategies until we leave the login page
+      const submitted = await this.submitLoginForm();
+      if (!submitted) {
+        console.log('[MonotaRO] login: all submission strategies failed');
+        await this.takeScreenshot('login_all_failed');
         return false;
       }
 
-      await passwordField.fill(credentials.password);
-      console.log('[MonotaRO] login: filled password');
-
-      // ---- Strategy 1: Find the form containing password field, click its submit button ----
-      let loginClicked = false;
-      try {
-        const loginForm = this.page.locator('form').filter({ has: this.page.locator('input[name="password"]') }).first();
-        if (await loginForm.count() > 0) {
-          console.log('[MonotaRO] login: found form containing password field');
-
-          const formButtonSelectors = [
-            'button[type="submit"]',
-            'input[type="submit"]',
-            'button',
-          ];
-
-          for (const selector of formButtonSelectors) {
-            const btn = loginForm.locator(selector).first();
-            if (await btn.count() > 0) {
-              const btnText = await btn.textContent().catch(() => '') || await btn.getAttribute('value') || '';
-              console.log(`[MonotaRO] login: found form button: ${selector}, text: "${btnText.trim()}"`);
-
-              await btn.scrollIntoViewIfNeeded().catch(() => {});
-              await this.page.waitForTimeout(300);
-              const box = await btn.boundingBox();
-              if (box) {
-                console.log(`[MonotaRO] login: button position: x=${box.x}, y=${box.y}, w=${box.width}, h=${box.height}`);
-                await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-                loginClicked = true;
-                console.log(`[MonotaRO] login: mouse.click at (${box.x + box.width / 2}, ${box.y + box.height / 2})`);
-              } else {
-                await btn.click({ force: true, timeout: 5000 });
-                loginClicked = true;
-                console.log(`[MonotaRO] login: force-clicked ${selector}`);
-              }
-              break;
-            }
-          }
-        } else {
-          console.log('[MonotaRO] login: no form containing password field found');
-        }
-      } catch (e) {
-        console.log('[MonotaRO] login: strategy 1 failed:', (e as Error).message);
-      }
-
-      await this.page.waitForLoadState('domcontentloaded').catch(() => {});
-      await this.page.waitForTimeout(3000);
-      console.log('[MonotaRO] login: URL after strategy 1:', this.page.url());
-
-      // ---- Strategy 2: form.submit() on password field's parent form ----
-      if (this.page.url().includes('/login')) {
-        loginClicked = false;
-        try {
-          const result = await this.page.evaluate(() => {
-            const pwField = document.querySelector('input[name="password"]');
-            if (pwField) {
-              const form = pwField.closest('form');
-              if (form) {
-                form.submit();
-                return { submitted: true, action: form.action, method: form.method };
-              }
-            }
-            return { submitted: false };
-          });
-          console.log('[MonotaRO] login: form.submit() result:', JSON.stringify(result));
-          if (result.submitted) {
-            loginClicked = true;
-            await this.page.waitForLoadState('domcontentloaded').catch(() => {});
-            await this.page.waitForTimeout(3000);
-            console.log('[MonotaRO] login: URL after strategy 2:', this.page.url());
-          }
-        } catch (e) {
-          console.log('[MonotaRO] login: strategy 2 failed:', (e as Error).message);
-        }
-      }
-
-      // ---- All strategies failed: dump form structure for debugging ----
-      if (this.page.url().includes('/login')) {
-        console.log('[MonotaRO] login: still on login page after all strategies');
-        const formsInfo = await this.page.evaluate(() => {
-          return Array.from(document.querySelectorAll('form')).map((f, i) => ({
-            index: i,
-            action: f.action,
-            method: f.method,
-            id: f.id,
-            className: f.className.substring(0, 80),
-            inputs: Array.from(f.querySelectorAll('input, button')).map(el => ({
-              tag: el.tagName,
-              name: el.getAttribute('name'),
-              type: el.getAttribute('type'),
-              id: el.id,
-              value: (el.getAttribute('value') || '').substring(0, 30),
-              text: (el.textContent || '').trim().substring(0, 30),
-            })),
-          }));
-        });
-        console.log('[MonotaRO] login: ALL FORMS:', JSON.stringify(formsInfo, null, 2));
-        await this.takeScreenshot('login_all_strategies_failed');
-        return false;
-      }
-
-      console.log('[MonotaRO] login: navigated to:', this.page.url());
-      await this.takeScreenshot('login_after_submit');
-
-      // Check login result
+      // Verify login by navigating to top page and checking
+      console.log('[MonotaRO] login: verifying login on top page');
+      await this.page.goto(this.getTopPageUrl(), {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+      await this.page.waitForTimeout(2000);
       const loggedIn = await this.isLoggedIn();
-      console.log('[MonotaRO] login: isLoggedIn result:', loggedIn);
+      console.log('[MonotaRO] login: verified login:', loggedIn);
+      await this.takeScreenshot('login_verified');
 
       if (!loggedIn) {
-        const errorText = await this.page.evaluate(() => {
-          const errorEls = document.querySelectorAll('.error, .alert, .login-error, [class*="error"], [class*="alert"]');
-          return Array.from(errorEls).map(el => (el.textContent || '').trim()).filter(t => t.length > 0);
-        });
-        if (errorText.length > 0) {
-          console.log('[MonotaRO] login: error messages:', JSON.stringify(errorText));
-        }
+        // Dump page state for debugging
+        const pageInfo = await this.page.evaluate(() => ({
+          url: location.href,
+          title: document.title,
+          bodyTextSnippet: document.body.innerText.substring(0, 500),
+        }));
+        console.log('[MonotaRO] login: page info after failed verification:', JSON.stringify(pageInfo));
       }
 
       return loggedIn;
     } catch (e) {
       console.log('[MonotaRO] login: EXCEPTION:', (e as Error).message);
-      console.log('[MonotaRO] login: stack:', (e as Error).stack);
       await this.takeScreenshot('login_exception');
       return false;
     }
   }
 
-  async addSingleItemToCart(quantity: number): Promise<boolean> {
+  /** Fill userId and password fields on the current page's login form. */
+  private async fillLoginForm(credentials: { username: string; password: string }): Promise<boolean> {
     if (!this.page) return false;
 
-    // MonotaRO product pages:
-    //  - Variation table: each row has input[name="p"] + "バスケットに入れる" button
-    //  - Single product: one quantity input + one button
-    // Strategy: find the first "バスケットに入れる" button, find the quantity input
-    // in the same row, fill it, then click the button.
+    const userIdSelectors = [
+      'input[name="userId"]',
+      'input[name="loginId"]',
+      'input[id="userId"]',
+      'input[type="email"]',
+    ];
+    const passwordSelectors = [
+      'input[name="password"]',
+      'input[id="password"]',
+      'input[type="password"]',
+    ];
+
+    let userIdField = null;
+    for (const sel of userIdSelectors) {
+      const el = this.page.locator(sel).first();
+      if (await el.count() > 0) {
+        userIdField = el;
+        console.log(`[MonotaRO] fillLoginForm: found userId: ${sel}`);
+        break;
+      }
+    }
+    if (!userIdField) {
+      console.log('[MonotaRO] fillLoginForm: userId field NOT FOUND');
+      await this.takeScreenshot('login_no_userid');
+      return false;
+    }
+
+    let passwordField = null;
+    for (const sel of passwordSelectors) {
+      const el = this.page.locator(sel).first();
+      if (await el.count() > 0) {
+        passwordField = el;
+        console.log(`[MonotaRO] fillLoginForm: found password: ${sel}`);
+        break;
+      }
+    }
+    if (!passwordField) {
+      console.log('[MonotaRO] fillLoginForm: password field NOT FOUND');
+      await this.takeScreenshot('login_no_password');
+      return false;
+    }
+
+    await userIdField.fill(credentials.username);
+    await passwordField.fill(credentials.password);
+    console.log('[MonotaRO] fillLoginForm: credentials filled');
+    return true;
+  }
+
+  /**
+   * Try multiple strategies to submit the login form.
+   * Returns true if we navigated away from the login page.
+   */
+  private async submitLoginForm(): Promise<boolean> {
+    if (!this.page) return false;
+
+    const isOnLoginPage = () => {
+      return this.page!.url().includes('/login');
+    };
+
+    // Strategy 1: Press Enter in the password field
+    // This is the most natural form submission trigger
+    console.log('[MonotaRO] submitLoginForm: strategy 1 - Enter key');
+    try {
+      const pwField = this.page.locator('input[name="password"], input[type="password"]').first();
+      if (await pwField.count() > 0) {
+        await pwField.focus();
+        await this.page.keyboard.press('Enter');
+        await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+        await this.page.waitForTimeout(3000);
+        console.log('[MonotaRO] submitLoginForm: after Enter, URL:', this.page.url());
+        if (!isOnLoginPage()) return true;
+      }
+    } catch (e) {
+      console.log('[MonotaRO] submitLoginForm: strategy 1 failed:', (e as Error).message);
+    }
+
+    // Strategy 2: Playwright's locator.click() on submit button
+    // Dispatches proper event sequence (mousedown → mouseup → click)
+    console.log('[MonotaRO] submitLoginForm: strategy 2 - locator.click()');
+    try {
+      const loginForm = this.page.locator('form').filter({ has: this.page.locator('input[name="password"]') }).first();
+      const submitBtn = loginForm.locator('button[type="submit"], input[type="submit"], button').first();
+      if (await submitBtn.count() > 0) {
+        await submitBtn.click({ timeout: 5000 });
+        await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+        await this.page.waitForTimeout(3000);
+        console.log('[MonotaRO] submitLoginForm: after locator.click, URL:', this.page.url());
+        if (!isOnLoginPage()) return true;
+      }
+    } catch (e) {
+      console.log('[MonotaRO] submitLoginForm: strategy 2 failed:', (e as Error).message);
+    }
+
+    // Strategy 3: DOM element.click() via evaluate
+    // Triggers click event from JavaScript context
+    console.log('[MonotaRO] submitLoginForm: strategy 3 - element.click()');
+    try {
+      await this.page.evaluate(() => {
+        const pwField = document.querySelector('input[name="password"]') as HTMLInputElement;
+        const form = pwField?.closest('form');
+        if (form) {
+          const btn = form.querySelector('button[type="submit"]') || form.querySelector('button') || form.querySelector('input[type="submit"]');
+          if (btn) (btn as HTMLElement).click();
+        }
+      });
+      await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+      await this.page.waitForTimeout(3000);
+      console.log('[MonotaRO] submitLoginForm: after element.click, URL:', this.page.url());
+      if (!isOnLoginPage()) return true;
+    } catch (e) {
+      console.log('[MonotaRO] submitLoginForm: strategy 3 failed:', (e as Error).message);
+    }
+
+    // Strategy 4: form.requestSubmit() - triggers submit event with validation
+    console.log('[MonotaRO] submitLoginForm: strategy 4 - requestSubmit()');
+    try {
+      await this.page.evaluate(() => {
+        const pwField = document.querySelector('input[name="password"]');
+        const form = pwField?.closest('form');
+        if (form) form.requestSubmit();
+      });
+      await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+      await this.page.waitForTimeout(3000);
+      console.log('[MonotaRO] submitLoginForm: after requestSubmit, URL:', this.page.url());
+      if (!isOnLoginPage()) return true;
+    } catch (e) {
+      console.log('[MonotaRO] submitLoginForm: strategy 4 failed:', (e as Error).message);
+    }
+
+    // Strategy 5: form.submit() - raw form submission (last resort, bypasses JS handlers)
+    console.log('[MonotaRO] submitLoginForm: strategy 5 - form.submit()');
+    try {
+      const result = await this.page.evaluate(() => {
+        const pwField = document.querySelector('input[name="password"]');
+        const form = pwField?.closest('form');
+        if (form) {
+          form.submit();
+          return { action: form.action, method: form.method };
+        }
+        return null;
+      });
+      console.log('[MonotaRO] submitLoginForm: form.submit() info:', JSON.stringify(result));
+      await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+      await this.page.waitForTimeout(3000);
+      console.log('[MonotaRO] submitLoginForm: after form.submit, URL:', this.page.url());
+      if (!isOnLoginPage()) return true;
+    } catch (e) {
+      console.log('[MonotaRO] submitLoginForm: strategy 5 failed:', (e as Error).message);
+    }
+
+    console.log('[MonotaRO] submitLoginForm: ALL strategies failed, still on:', this.page.url());
+    await this.dumpFormStructure();
+    return false;
+  }
+
+  async addSingleItemToCart(quantity: number): Promise<boolean> {
+    if (!this.page) return false;
 
     const cartButtons = await this.page.$$('button:has-text("バスケットに入れる")');
     if (cartButtons.length === 0) {
@@ -313,177 +343,134 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
   async checkout(): Promise<boolean> {
     if (!this.page) return false;
     try {
-      // Step 1: Navigate to actual cart page
-      const cartUrl = this.getCartUrl();
-      console.log('[MonotaRO] checkout: Step 1 - navigating to cart page:', cartUrl);
-      await this.page.goto(cartUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await this.page.waitForTimeout(3000);
-      console.log('[MonotaRO] checkout: current URL:', this.page.url());
+      // Step 1: Verify cart has items
+      console.log('[MonotaRO] checkout: Step 1 - verifying cart');
+      await this.page.goto(this.getCartUrl(), { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await this.page.waitForTimeout(2000);
       await this.takeScreenshot('checkout_cart');
+      console.log('[MonotaRO] checkout: cart URL:', this.page.url());
 
-      // Step 2: Click "レジへ進む" using coordinate-based clicking
-      console.log('[MonotaRO] checkout: Step 2 - looking for "レジへ進む" button');
-      const proceedClicked = await this.clickElementByText(
-        ['a:has-text("レジへ進む")', 'button:has-text("レジへ進む")', 'input[value*="レジへ進む"]'],
-        'レジへ進む',
-      );
-      if (!proceedClicked) {
-        console.log('[MonotaRO] checkout: "レジへ進む" not found, dumping clickable elements');
-        await this.dumpClickableElements();
-        await this.takeScreenshot('checkout_no_button');
+      const cartInfo = await this.page.evaluate(() => {
+        const body = document.body.innerText;
+        return {
+          hasItems: body.includes('バスケットの内容') && !body.includes('バスケットに商品がありません'),
+          isLoggedIn: !document.querySelector('#headerArea a[href*="/login/"]'),
+        };
+      });
+      console.log('[MonotaRO] checkout: cart info:', JSON.stringify(cartInfo));
+
+      if (!cartInfo.hasItems) {
+        console.log('[MonotaRO] checkout: cart is empty, aborting');
         return false;
       }
 
-      // Wait for page transition
-      await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+      // Step 2: Navigate directly to checkout URL
+      // This is more reliable than clicking "レジへ進む" which may not work in headless mode
+      console.log('[MonotaRO] checkout: Step 2 - navigating directly to checkout URL');
+      await this.page.goto(CHECKOUT_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await this.page.waitForTimeout(3000);
-      console.log('[MonotaRO] checkout: after レジへ進む, URL:', this.page.url());
-      await this.takeScreenshot('checkout_after_proceed');
+      console.log('[MonotaRO] checkout: after direct navigation, URL:', this.page.url());
+      await this.takeScreenshot('checkout_direct_nav');
 
-      // Handle inline login if session expired during checkout
-      await this.handleCheckoutLoginIfNeeded();
-
-      // After login, if still on cart page, re-click "レジへ進む"
-      const afterLoginUrl = this.page.url();
-      if (afterLoginUrl.includes('basket') || afterLoginUrl.includes('showListServlet') || afterLoginUrl.includes('/cart')) {
-        console.log('[MonotaRO] checkout: still on cart page after login, re-clicking レジへ進む');
-        const reClicked = await this.clickElementByText(
-          ['a:has-text("レジへ進む")', 'button:has-text("レジへ進む")', 'input[value*="レジへ進む"]'],
-          'レジへ進む',
-        );
-        if (reClicked) {
-          await this.page.waitForLoadState('domcontentloaded').catch(() => {});
-          await this.page.waitForTimeout(3000);
-          console.log('[MonotaRO] checkout: after re-click レジへ進む, URL:', this.page.url());
-          await this.takeScreenshot('checkout_after_reclick_proceed');
-
-          // May need login again after re-click
-          await this.handleCheckoutLoginIfNeeded();
+      // If redirected to login page, log in and retry
+      if (this.page.url().includes('/login')) {
+        console.log('[MonotaRO] checkout: redirected to login, logging in');
+        if (this.credentials) {
+          const filled = await this.fillLoginForm(this.credentials);
+          if (filled) {
+            const submitted = await this.submitLoginForm();
+            if (submitted) {
+              console.log('[MonotaRO] checkout: login submitted, navigating to checkout again');
+              await this.page.goto(CHECKOUT_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+              await this.page.waitForTimeout(3000);
+              console.log('[MonotaRO] checkout: after re-login, URL:', this.page.url());
+              await this.takeScreenshot('checkout_after_relogin');
+            }
+          }
         }
       }
 
-      // Step 3: Navigate through intermediate pages until we reach the confirmation page
-      // MonotaRO may show delivery/payment selection pages before the final confirmation
-      const MAX_INTERMEDIATE_PAGES = 5;
-      for (let i = 0; i < MAX_INTERMEDIATE_PAGES; i++) {
-        const currentUrl = this.page.url();
-        const bodyText = await this.page.textContent('body') ?? '';
-
-        console.log(`[MonotaRO] checkout: Step 3 iteration ${i + 1}, URL: ${currentUrl}`);
-
-        // If still on cart page, try clicking "レジへ進む" again
-        const stillOnCart = currentUrl.includes('basket') || currentUrl.includes('showListServlet') || currentUrl.includes('/cart');
-        if (stillOnCart) {
-          console.log('[MonotaRO] checkout: still on cart page in loop, trying レジへ進む again');
-          const reClicked = await this.clickElementByText(
-            ['a:has-text("レジへ進む")', 'button:has-text("レジへ進む")', 'input[value*="レジへ進む"]'],
-            'レジへ進む',
-          );
-          if (reClicked) {
-            await this.page.waitForLoadState('domcontentloaded').catch(() => {});
-            await this.page.waitForTimeout(3000);
-            await this.handleCheckoutLoginIfNeeded();
+      // If still on cart page with login form, try submitting the cart page's login form
+      if (this.isCartPageUrl(this.page.url())) {
+        console.log('[MonotaRO] checkout: still on cart page, trying cart page login form');
+        if (this.credentials) {
+          const cartLoginResult = await this.loginViaCartPage(this.credentials);
+          if (!cartLoginResult) {
+            console.log('[MonotaRO] checkout: cart page login failed');
+            await this.takeScreenshot('checkout_cart_login_failed');
+            return false;
           }
-          continue;
+        }
+      }
+
+      // Step 3: Navigate through intermediate pages
+      console.log('[MonotaRO] checkout: Step 3 - handling intermediate pages');
+      const MAX_PAGES = 5;
+      for (let i = 0; i < MAX_PAGES; i++) {
+        const url = this.page.url();
+        const bodyText = await this.page.textContent('body') ?? '';
+        console.log(`[MonotaRO] checkout: page ${i + 1}, URL: ${url}`);
+
+        // Guard: if on cart page, something went wrong
+        if (this.isCartPageUrl(url)) {
+          console.log('[MonotaRO] checkout: unexpectedly on cart page, aborting');
+          await this.dumpClickableElements();
+          await this.takeScreenshot('checkout_stuck_on_cart');
+          return false;
         }
 
-        // Check if we're on the final confirmation page
+        // Check if on final confirmation page
         if (bodyText.includes('ご注文内容の確定') || bodyText.includes('まだご注文は確定していません')) {
           console.log('[MonotaRO] checkout: reached order confirmation page');
           break;
         }
 
-        // Check if we already completed the order (skipped confirmation page)
-        if (this.isCompletionPage(currentUrl, bodyText)) {
-          console.log('[MonotaRO] checkout: order already completed (skipped confirmation)');
+        // Check if already completed
+        if (this.isCompletionPage(url, bodyText)) {
+          console.log('[MonotaRO] checkout: order already completed');
           await this.takeScreenshot('checkout_complete');
           return true;
         }
 
-        // Look for "次へ進む" / "確認画面へ進む" / continue-style buttons on intermediate pages
-        const intermediateSelectors = [
-          'a:has-text("次へ進む")', 'button:has-text("次へ進む")',
-          'a:has-text("確認画面へ進む")', 'button:has-text("確認画面へ進む")',
-          'a:has-text("お届け先の確認")', 'button:has-text("お届け先の確認")',
-          'input[type="submit"][value*="次へ"]', 'input[type="submit"][value*="進む"]',
-          'input[type="submit"][value*="確認"]',
-        ];
-
-        let clickedIntermediate = false;
-        for (const selector of intermediateSelectors) {
-          const el = this.page.locator(selector).first();
-          if (await el.count() > 0) {
-            const text = await el.textContent().catch(() => '') ?? await el.getAttribute('value') ?? '';
-            console.log(`[MonotaRO] checkout: found intermediate button: "${text.trim()}" (${selector})`);
-            const clicked = await this.clickLocatorByCoordinates(el, `intermediate_${i}`);
-            if (clicked) {
-              clickedIntermediate = true;
-              await this.page.waitForLoadState('domcontentloaded').catch(() => {});
-              await this.page.waitForTimeout(3000);
-              await this.takeScreenshot(`checkout_intermediate_${i}`);
-              // Handle login again in case it appears
-              await this.handleCheckoutLoginIfNeeded();
-              break;
-            }
-          }
-        }
-
-        if (!clickedIntermediate) {
-          // No intermediate button found - might already be on confirmation page
-          // or on an unexpected page
-          console.log('[MonotaRO] checkout: no intermediate button found, proceeding');
+        // Try to find and click intermediate buttons
+        const clicked = await this.clickIntermediateButton();
+        if (!clicked) {
+          console.log('[MonotaRO] checkout: no intermediate button found');
           break;
         }
+        await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+        await this.page.waitForTimeout(3000);
+        await this.takeScreenshot(`checkout_intermediate_${i}`);
       }
 
-      await this.page.waitForTimeout(2000);
-      console.log('[MonotaRO] checkout: ready for order confirmation, URL:', this.page.url());
+      // Step 4: Click order confirmation button
+      console.log('[MonotaRO] checkout: Step 4 - confirming order');
+      await this.takeScreenshot('checkout_before_confirm');
 
-      // Verify we're on the confirmation page
-      const confirmBodyText = await this.page.textContent('body') ?? '';
-      if (confirmBodyText.includes('まだご注文は確定していません')) {
-        console.log('[MonotaRO] checkout: confirmed on pre-confirmation page ("まだご注文は確定していません" found)');
-      }
-      await this.takeScreenshot('checkout_confirm');
-
-      // Step 4: Click "ご注文内容の確定" using coordinate-based clicking
-      console.log('[MonotaRO] checkout: Step 4 - looking for "ご注文内容の確定" button');
-      const orderClicked = await this.clickElementByText(
-        [
-          'button:has-text("ご注文内容の確定")',
-          'a:has-text("ご注文内容の確定")',
-          'input[type="submit"][value*="注文内容の確定"]',
-          '.order-confirm-button',
-          'button:has-text("注文を確定")',
-          'a:has-text("注文を確定")',
-        ],
-        '注文内容の確定',
-      );
-      if (!orderClicked) {
-        console.log('[MonotaRO] checkout: "ご注文内容の確定" not found, dumping clickable elements');
+      const confirmed = await this.clickConfirmButton();
+      if (!confirmed) {
+        console.log('[MonotaRO] checkout: confirmation button not found or click failed');
         await this.dumpClickableElements();
-        await this.takeScreenshot('checkout_no_order_button');
+        await this.takeScreenshot('checkout_no_confirm_button');
         return false;
       }
-      await this.page.waitForLoadState('domcontentloaded').catch(() => {});
 
-      // Step 5: Wait for post-confirmation navigation (may redirect to payment provider)
-      console.log('[MonotaRO] checkout: Step 5 - waiting for post-confirmation (10s)');
+      // Step 5: Wait and check completion
+      console.log('[MonotaRO] checkout: Step 5 - checking completion');
+      await this.page.waitForLoadState('domcontentloaded').catch(() => {});
       await this.page.waitForTimeout(10000);
 
       const finalUrl = this.page.url();
+      const finalText = await this.page.textContent('body') ?? '';
       console.log('[MonotaRO] checkout: final URL:', finalUrl);
-      await this.takeScreenshot('checkout_complete');
+      await this.takeScreenshot('checkout_final');
 
-      const completionText = await this.page.textContent('body') ?? '';
-      const isComplete = this.isCompletionPage(finalUrl, completionText);
-
+      const isComplete = this.isCompletionPage(finalUrl, finalText);
       console.log('[MonotaRO] checkout: order complete:', isComplete);
 
-      // Try to extract order number
-      const orderNumberMatch = completionText.match(/注文番号[：:\s]*([A-Z0-9-]+)/);
-      if (orderNumberMatch) {
-        console.log('[MonotaRO] checkout: order number:', orderNumberMatch[1]);
+      const orderMatch = finalText.match(/注文番号[：:\s]*([A-Z0-9-]+)/);
+      if (orderMatch) {
+        console.log('[MonotaRO] checkout: order number:', orderMatch[1]);
       }
 
       return isComplete;
@@ -494,120 +481,185 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
     }
   }
 
+  /**
+   * Login via the cart page's embedded login form.
+   * The cart page has userId/password fields and a "レジへ進む" button
+   * that functions as login + proceed to checkout.
+   */
+  private async loginViaCartPage(credentials: { username: string; password: string }): Promise<boolean> {
+    if (!this.page) return false;
+
+    console.log('[MonotaRO] loginViaCartPage: filling login form on cart page');
+    const filled = await this.fillLoginForm(credentials);
+    if (!filled) return false;
+
+    // The cart page form submission should log in AND proceed to checkout
+    // Try Enter key first, then form.requestSubmit(), then form.submit()
+    const strategies = [
+      {
+        name: 'Enter key',
+        fn: async () => {
+          const pwField = this.page!.locator('input[name="password"], input[type="password"]').first();
+          if (await pwField.count() > 0) {
+            await pwField.focus();
+            await this.page!.keyboard.press('Enter');
+          }
+        },
+      },
+      {
+        name: 'requestSubmit',
+        fn: async () => {
+          await this.page!.evaluate(() => {
+            const pw = document.querySelector('input[name="password"]');
+            const form = pw?.closest('form');
+            if (form) form.requestSubmit();
+          });
+        },
+      },
+      {
+        name: 'form.submit',
+        fn: async () => {
+          await this.page!.evaluate(() => {
+            const pw = document.querySelector('input[name="password"]');
+            const form = pw?.closest('form');
+            if (form) form.submit();
+          });
+        },
+      },
+    ];
+
+    for (const strategy of strategies) {
+      console.log(`[MonotaRO] loginViaCartPage: trying ${strategy.name}`);
+      try {
+        await strategy.fn();
+        await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+        await this.page.waitForTimeout(3000);
+        console.log(`[MonotaRO] loginViaCartPage: after ${strategy.name}, URL:`, this.page.url());
+
+        if (!this.isCartPageUrl(this.page.url())) {
+          console.log(`[MonotaRO] loginViaCartPage: ${strategy.name} succeeded, left cart page`);
+          await this.takeScreenshot('cart_login_success');
+          return true;
+        }
+      } catch (e) {
+        console.log(`[MonotaRO] loginViaCartPage: ${strategy.name} failed:`, (e as Error).message);
+      }
+    }
+
+    console.log('[MonotaRO] loginViaCartPage: all strategies failed');
+    await this.takeScreenshot('cart_login_all_failed');
+    return false;
+  }
+
+  /** Check if URL is the cart page. */
+  private isCartPageUrl(url: string): boolean {
+    return url.includes('basket') || url.includes('showListServlet') || url.includes('/cart');
+  }
+
   /** Check if the current page indicates order completion. */
   private isCompletionPage(url: string, bodyText: string): boolean {
-    // Guard: if still on cart page, it's definitely NOT completion
-    const isCartPage = url.includes('basket') || url.includes('showListServlet') || url.includes('/cart');
-    if (isCartPage) {
+    if (this.isCartPageUrl(url)) {
       console.log('[MonotaRO] isCompletionPage: still on cart page, NOT complete');
       return false;
     }
 
     const urlLower = url.toLowerCase();
-    const urlIndicatesComplete = ['complete', 'finish', 'thankyou', 'done', 'order_finish'].some(
-      (kw) => urlLower.includes(kw),
-    );
-    if (urlIndicatesComplete) {
+    if (['complete', 'finish', 'thankyou', 'done', 'order_finish'].some(kw => urlLower.includes(kw))) {
       console.log('[MonotaRO] isCompletionPage: URL indicates completion');
       return true;
     }
 
-    // Strong text indicators (these only appear on completion pages)
-    const strongTextIndicators = ['ご注文完了', 'ご注文ありがとう', 'ご注文を承りました'];
-    const hasStrongText = strongTextIndicators.some((kw) => bodyText.includes(kw));
-    if (hasStrongText) {
+    if (['ご注文完了', 'ご注文ありがとう', 'ご注文を承りました'].some(kw => bodyText.includes(kw))) {
       console.log('[MonotaRO] isCompletionPage: strong text indicates completion');
       return true;
     }
 
-    // Weak indicator: "注文番号" alone is NOT enough (appears on cart/order history too)
-    // Only count it if combined with other signals (e.g., URL changed from checkout flow)
-    const isCheckoutFlow = url.includes('checkout') || url.includes('order');
-    const hasOrderNumber = bodyText.includes('注文番号');
-    if (hasOrderNumber && isCheckoutFlow) {
-      console.log('[MonotaRO] isCompletionPage: order number + checkout URL indicates completion');
+    // "注文番号" alone is too generic (appears on cart pages)
+    if (bodyText.includes('注文番号') && (url.includes('checkout') || url.includes('order'))) {
+      console.log('[MonotaRO] isCompletionPage: order number + checkout URL');
       return true;
     }
 
-    console.log('[MonotaRO] isCompletionPage: no completion indicators found');
+    console.log('[MonotaRO] isCompletionPage: no completion indicators');
     return false;
   }
 
-  /** Handle inline login if it appears during checkout. */
-  private async handleCheckoutLoginIfNeeded(): Promise<void> {
-    if (!this.page || !this.credentials) return;
+  /** Try to click intermediate buttons (次へ進む, 確認画面へ進む, etc.) */
+  private async clickIntermediateButton(): Promise<boolean> {
+    if (!this.page) return false;
 
-    const pageState = await this.page.evaluate(() => {
-      return {
-        hasUserIdField: !!document.querySelector('input[name="userId"]'),
-        hasPasswordField: !!document.querySelector('input[name="password"]'),
-        hasOrderConfirm: document.body.innerText.includes('ご注文内容の確定'),
-      };
-    });
-    console.log('[MonotaRO] checkout: page state check:', JSON.stringify(pageState));
+    const selectors = [
+      'button:has-text("次へ進む")', 'a:has-text("次へ進む")',
+      'button:has-text("確認画面へ進む")', 'a:has-text("確認画面へ進む")',
+      'button:has-text("お届け先の確認")', 'a:has-text("お届け先の確認")',
+      'input[type="submit"][value*="次へ"]',
+      'input[type="submit"][value*="進む"]',
+      'input[type="submit"][value*="確認"]',
+    ];
 
-    const hasLoginForm = pageState.hasUserIdField && pageState.hasPasswordField && !pageState.hasOrderConfirm;
-    if (!hasLoginForm) return;
-
-    console.log('[MonotaRO] checkout: login form detected, attempting inline login');
-    await this.takeScreenshot('checkout_login_form');
-
-    let inlineLoginSuccess = false;
-
-    try {
-      const loginForm = this.page.locator('form').filter({ has: this.page.locator('input[name="password"]') }).first();
-
-      if (await loginForm.count() > 0) {
-        const userIdField = loginForm.locator('input[name="userId"]').first();
-        const pwField = loginForm.locator('input[name="password"]').first();
-
-        if (await userIdField.count() > 0 && await pwField.count() > 0) {
-          await userIdField.fill(this.credentials.username);
-          await pwField.fill(this.credentials.password);
-          console.log('[MonotaRO] checkout: filled inline login fields');
-
-          const submitBtn = loginForm.locator('button[type="submit"], input[type="submit"], button').first();
-          if (await submitBtn.count() > 0) {
-            await this.clickLocatorByCoordinates(submitBtn, 'inline_login');
-          } else {
-            await this.page.evaluate(() => {
-              const pw = document.querySelector('input[name="password"]');
-              const form = pw?.closest('form');
-              if (form) form.submit();
-            });
-            console.log('[MonotaRO] checkout: inline login via form.submit()');
-          }
-
-          await this.page.waitForLoadState('domcontentloaded').catch(() => {});
-          await this.page.waitForTimeout(3000);
-          console.log('[MonotaRO] checkout: after inline login, URL:', this.page.url());
-          await this.takeScreenshot('checkout_after_inline_login');
-          inlineLoginSuccess = true;
-        }
-      }
-    } catch (e) {
-      console.log('[MonotaRO] checkout: inline login error:', (e as Error).message);
-    }
-
-    if (!inlineLoginSuccess) {
-      console.log('[MonotaRO] checkout: inline login failed, trying full login flow');
-      const loginSuccess = await this.login(this.credentials);
-      if (loginSuccess) {
-        await this.page.goto(this.getCartUrl(), { waitUntil: 'domcontentloaded', timeout: 30000 });
-        await this.page.waitForTimeout(2000);
-        const recheckoutBtn = this.page.locator('a:has-text("レジへ進む"), button:has-text("レジへ進む")').first();
-        if (await recheckoutBtn.count() > 0) {
-          await this.clickLocatorByCoordinates(recheckoutBtn, 're_checkout');
-          await this.page.waitForLoadState('domcontentloaded').catch(() => {});
-          await this.page.waitForTimeout(3000);
-        }
+    for (const sel of selectors) {
+      const el = this.page.locator(sel).first();
+      if (await el.count() > 0) {
+        const text = await el.textContent().catch(() => '') ?? '';
+        console.log(`[MonotaRO] clickIntermediateButton: found "${text.trim()}" via ${sel}`);
+        const clicked = await this.clickWithMultipleStrategies(el, `intermediate(${sel})`);
+        if (clicked) return true;
       }
     }
+    return false;
   }
 
-  /** Click an element using coordinate-based mouse.click (scrollIntoView → boundingBox → mouse.click). */
-  private async clickLocatorByCoordinates(locator: import('playwright').Locator, label: string): Promise<boolean> {
+  /** Click the order confirmation button (ご注文内容の確定). */
+  private async clickConfirmButton(): Promise<boolean> {
     if (!this.page) return false;
+
+    const selectors = [
+      'button:has-text("ご注文内容の確定")',
+      'a:has-text("ご注文内容の確定")',
+      'input[type="submit"][value*="注文内容の確定"]',
+      'button:has-text("注文を確定")',
+      'a:has-text("注文を確定")',
+      '.order-confirm-button',
+    ];
+
+    for (const sel of selectors) {
+      const el = this.page.locator(sel).first();
+      if (await el.count() > 0) {
+        const text = await el.textContent().catch(() => '') ?? '';
+        console.log(`[MonotaRO] clickConfirmButton: found "${text.trim()}" via ${sel}`);
+        const clicked = await this.clickWithMultipleStrategies(el, `confirm(${sel})`);
+        if (clicked) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Click an element using multiple strategies to maximize reliability.
+   * Tries: locator.click → DOM .click() → mouse.click at coordinates
+   */
+  private async clickWithMultipleStrategies(locator: import('playwright').Locator, label: string): Promise<boolean> {
+    if (!this.page) return false;
+
+    // Strategy 1: Playwright's locator.click() - proper event dispatch
+    try {
+      await locator.click({ timeout: 5000 });
+      console.log(`[MonotaRO] clickMulti(${label}): locator.click succeeded`);
+      return true;
+    } catch (e) {
+      console.log(`[MonotaRO] clickMulti(${label}): locator.click failed: ${(e as Error).message}`);
+    }
+
+    // Strategy 2: DOM element.click() via evaluate
+    try {
+      await locator.evaluate((el: HTMLElement) => el.click());
+      console.log(`[MonotaRO] clickMulti(${label}): element.click() succeeded`);
+      return true;
+    } catch (e) {
+      console.log(`[MonotaRO] clickMulti(${label}): element.click() failed: ${(e as Error).message}`);
+    }
+
+    // Strategy 3: Coordinate-based mouse.click (scrollIntoView → boundingBox)
     try {
       await locator.scrollIntoViewIfNeeded().catch(() => {});
       await this.page.waitForTimeout(300);
@@ -616,72 +668,71 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
         const x = box.x + box.width / 2;
         const y = box.y + box.height / 2;
         await this.page.mouse.click(x, y);
-        console.log(`[MonotaRO] clickLocatorByCoordinates(${label}): mouse.click at (${x}, ${y})`);
+        console.log(`[MonotaRO] clickMulti(${label}): mouse.click at (${x}, ${y})`);
         return true;
       }
-      // boundingBox null — fallback to force click
+    } catch (e) {
+      console.log(`[MonotaRO] clickMulti(${label}): mouse.click failed: ${(e as Error).message}`);
+    }
+
+    // Strategy 4: Force click
+    try {
       await locator.click({ force: true, timeout: 5000 });
-      console.log(`[MonotaRO] clickLocatorByCoordinates(${label}): fallback force-click`);
+      console.log(`[MonotaRO] clickMulti(${label}): force-click succeeded`);
       return true;
     } catch (e) {
-      console.log(`[MonotaRO] clickLocatorByCoordinates(${label}): failed:`, (e as Error).message);
-      return false;
-    }
-  }
-
-  /** Try multiple selectors with coordinate-based clicking, with text-based locator fallback. */
-  private async clickElementByText(selectors: string[], fallbackText: string): Promise<boolean> {
-    if (!this.page) return false;
-
-    // Try each selector with coordinate-based clicking
-    for (const selector of selectors) {
-      try {
-        const el = this.page.locator(selector).first();
-        if (await el.count() > 0) {
-          const text = await el.textContent().catch(() => '') ?? await el.getAttribute('value') ?? '';
-          console.log(`[MonotaRO] clickElementByText: found "${text.trim()}" via ${selector}`);
-          const clicked = await this.clickLocatorByCoordinates(el, selector);
-          if (clicked) return true;
-        }
-      } catch (e) {
-        console.log(`[MonotaRO] clickElementByText: ${selector} failed:`, (e as Error).message);
-      }
-    }
-
-    // Final fallback: text-based locator
-    try {
-      const locator = this.page.locator(`text=${fallbackText}`).first();
-      if (await locator.count() > 0) {
-        const text = await locator.textContent();
-        console.log(`[MonotaRO] clickElementByText: found via text fallback: "${text?.trim()}"`);
-        const clicked = await this.clickLocatorByCoordinates(locator, `text=${fallbackText}`);
-        if (clicked) return true;
-      }
-    } catch (e) {
-      console.log(`[MonotaRO] clickElementByText: text fallback failed:`, (e as Error).message);
+      console.log(`[MonotaRO] clickMulti(${label}): force-click failed: ${(e as Error).message}`);
     }
 
     return false;
   }
 
-  /** Dump all clickable elements' text for debugging when a selector fails. */
+  /** Dump form structure for debugging. */
+  private async dumpFormStructure(): Promise<void> {
+    if (!this.page) return;
+    try {
+      const forms = await this.page.evaluate(() => {
+        return Array.from(document.querySelectorAll('form')).map((f, i) => ({
+          index: i,
+          action: f.action,
+          method: f.method,
+          id: f.id,
+          inputs: Array.from(f.querySelectorAll('input, button')).map(el => ({
+            tag: el.tagName,
+            name: el.getAttribute('name'),
+            type: el.getAttribute('type'),
+            text: (el.textContent || '').trim().substring(0, 40),
+          })),
+        }));
+      });
+      console.log('[MonotaRO] forms:', JSON.stringify(forms, null, 2));
+    } catch (e) {
+      console.log('[MonotaRO] dumpFormStructure failed:', (e as Error).message);
+    }
+  }
+
+  /** Dump all clickable elements for debugging. */
   private async dumpClickableElements(): Promise<void> {
     if (!this.page) return;
-    const elements = await this.page.$$eval(
-      'a, button, input[type="submit"]',
-      (els: Element[]) =>
-        els.map((el) => ({
-          tag: el.tagName,
-          text: (el as HTMLElement).innerText?.trim().slice(0, 80) || '',
-          href: (el as HTMLAnchorElement).href || '',
-          value: (el as HTMLInputElement).value || '',
-        })),
-    );
-    console.log('[MonotaRO] clickable elements on page:');
-    for (const el of elements) {
-      if (el.text || el.value) {
-        console.log(`  <${el.tag}> text="${el.text}" value="${el.value}" href="${el.href}"`);
+    try {
+      const elements = await this.page.$$eval(
+        'a, button, input[type="submit"]',
+        (els: Element[]) =>
+          els.map((el) => ({
+            tag: el.tagName,
+            text: (el as HTMLElement).innerText?.trim().slice(0, 80) || '',
+            href: (el as HTMLAnchorElement).href || '',
+            value: (el as HTMLInputElement).value || '',
+          })),
+      );
+      console.log('[MonotaRO] clickable elements:');
+      for (const el of elements) {
+        if (el.text || el.value) {
+          console.log(`  <${el.tag}> text="${el.text}" value="${el.value}" href="${el.href}"`);
+        }
       }
+    } catch (e) {
+      console.log('[MonotaRO] dumpClickableElements failed:', (e as Error).message);
     }
   }
 }
