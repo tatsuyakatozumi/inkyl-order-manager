@@ -508,8 +508,13 @@ export function AdhocOrderForm() {
       )}
 
       {confirmDialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center">
-          <div className="h-full w-full overflow-y-auto bg-white p-6 shadow-xl md:mx-4 md:h-auto md:max-h-[90vh] md:max-w-lg md:rounded-lg">
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setConfirmDialogOpen(false);
+          }}
+        >
+          <div className="max-h-[85vh] w-full overflow-y-auto rounded-t-2xl bg-white p-6 shadow-xl md:mx-4 md:max-h-[90vh] md:max-w-lg md:rounded-lg">
             <div className="mb-4 flex items-center gap-2 text-lg font-bold text-red-700">
               <AlertTriangle className="h-5 w-5" />
               Confirm final order?
