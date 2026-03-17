@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
   libxi6 libxtst6 libglib2.0-0 libdbus-1-3 \
   libgtk-3-0 libgdk-pixbuf2.0-0 libpangocairo-1.0-0 libcairo-gobject2 \
   fonts-noto-cjk \
+  xvfb \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -23,6 +24,10 @@ RUN npx playwright install chromium firefox --with-deps
 # Copy source code.
 COPY . .
 
+# Copy and make entrypoint executable
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Public env vars for Next.js (safe to embed — these are public anon keys).
 ENV NEXT_PUBLIC_SUPABASE_URL=https://khpdyxacmpuaqvohpzdp.supabase.co
 ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtocGR5eGFjbXB1YXF2b2hwemRwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0OTI0OTksImV4cCI6MjA4OTA2ODQ5OX0.n5W-8yI1nwTxDqB-zCMpar8uNGm9YtZv8gcBbuCuCGI
@@ -34,4 +39,5 @@ EXPOSE 3000
 ENV PORT=3000
 ENV NODE_ENV=production
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["npm", "start"]

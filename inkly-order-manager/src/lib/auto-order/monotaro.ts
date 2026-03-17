@@ -8,11 +8,51 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
     super('MonotaRO');
   }
 
-  // NO initialize() override — use base class Chromium with --disable-http2 + stealth.
-  // The original working code used Chromium. Firefox was introduced to avoid
-  // Akamai HTTP/2 errors, but it triggered Akamai Bot Manager's client-side
-  // blocking instead. Chromium + --disable-http2 (already in base class) should
-  // handle both issues.
+  /**
+   * Override: use headed Chromium (headless: false) to bypass Akamai bot detection.
+   * Akamai blocks Chromium headless at page load level and Firefox headless at
+   * login form submission. Headed Chromium with --disable-http2 is the only
+   * working configuration. Requires Xvfb in Docker (see docker-entrypoint.sh).
+   */
+  async initialize(): Promise<void> {
+    const { chromium } = await import('playwright');
+    console.log('[MonotaRO] initialize: launching headed Chromium (requires DISPLAY)');
+    this.browser = await chromium.launch({
+      headless: false,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-http2',
+        '--disable-blink-features=AutomationControlled',
+      ],
+    });
+    this.page = await this.browser.newPage({
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      viewport: { width: 1280, height: 800 },
+    });
+
+    // Stealth: hide webdriver flag
+    await this.page.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    });
+    // Stealth: fake plugins
+    await this.page.addInitScript(() => {
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5],
+      });
+    });
+    // Stealth: set languages
+    await this.page.addInitScript(() => {
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['ja-JP', 'ja', 'en-US', 'en'],
+      });
+    });
+
+    this.loggedIn = false;
+  }
 
   getTopPageUrl(): string {
     return `${MONOTARO_BASE_URL}/`;
