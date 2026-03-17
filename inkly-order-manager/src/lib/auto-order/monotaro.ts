@@ -78,12 +78,17 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
         return true;
       }
 
-      // 3. Tertiary: session cookie check
+      // 3. Tertiary: session cookie check (exclude known Akamai/tracking cookies)
       const cookies = await this.page.context().cookies('https://www.monotaro.com');
+      const AKAMAI_COOKIES = new Set(['sid', 'aksid', 'bm_sz', 'bm_sv', 'ak_bmsc', '_abck', 'bm_mi']);
       const sessionCookies = cookies.filter(c =>
-        /session|sid|login|auth|user/i.test(c.name) && c.value.length > 0
+        !AKAMAI_COOKIES.has(c.name) &&
+        /session|login|auth|user/i.test(c.name) &&
+        c.value.length > 0
       );
-      console.log(`[MonotaRO] isLoggedIn: cookies total=${cookies.length}, session-like=${sessionCookies.length} [${sessionCookies.map(c => c.name).join(', ')}]`);
+      // Also log all cookies for debugging
+      console.log(`[MonotaRO] isLoggedIn: all cookies: [${cookies.map(c => c.name).join(', ')}]`);
+      console.log(`[MonotaRO] isLoggedIn: session cookies (excl Akamai): ${sessionCookies.length} [${sessionCookies.map(c => c.name).join(', ')}]`);
 
       if (sessionCookies.length > 0 && headerLoginCount === 0) {
         console.log('[MonotaRO] isLoggedIn: session cookie + no header login → true');
@@ -209,9 +214,21 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
       return false;
     }
 
-    await userIdField.fill(credentials.username);
-    await passwordField.fill(credentials.password);
-    console.log('[MonotaRO] fillLoginForm: credentials filled');
+    // Use pressSequentially (character-by-character typing) instead of fill().
+    // fill() sets the value programmatically with no key events, which Akamai
+    // Bot Manager's sensor detects as bot behavior. pressSequentially generates
+    // realistic keydown/keypress/keyup events for each character.
+    await userIdField.click();
+    await userIdField.clear();
+    await userIdField.pressSequentially(credentials.username, { delay: 30 });
+    await this.page.waitForTimeout(300);
+
+    await passwordField.click();
+    await passwordField.clear();
+    await passwordField.pressSequentially(credentials.password, { delay: 30 });
+    await this.page.waitForTimeout(500);
+
+    console.log('[MonotaRO] fillLoginForm: credentials typed (character-by-character)');
     return true;
   }
 
@@ -349,7 +366,65 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
       console.log('[MonotaRO] submitLoginForm: strategy 3 error:', (e as Error).message);
     }
 
-    // All strategies exhausted — do NOT fall back to form.submit()
+    // Strategy 4: Direct fetch POST from browser context.
+    // Bypasses Akamai's client-side JavaScript that blocks form submission
+    // when it detects a bot. The Akamai sensor data has already been sent
+    // (strategies 1-3 triggered it), so the server-side bot score should be set.
+    // We extract all form fields (including CSRF tokens) and POST directly.
+    console.log('[MonotaRO] submitLoginForm: strategy 4 — direct fetch POST');
+    try {
+      const result = await this.page.evaluate(async () => {
+        const form = document.getElementById('main') as HTMLFormElement;
+        if (!form) return { error: 'form #main not found' };
+
+        // Populate client_time fields that JS would normally set on submit
+        const ct = form.querySelector('input[name="client_time"]') as HTMLInputElement;
+        if (ct) ct.value = Date.now().toString();
+        const ctz = form.querySelector('input[name="client_time_zone"]') as HTMLInputElement;
+        if (ctz) ctz.value = (new Date().getTimezoneOffset() / -60).toString();
+
+        // Extract all form data (visible + hidden fields including CSRF tokens)
+        const formData = new FormData(form);
+        const params = new URLSearchParams();
+        formData.forEach((value, key) => params.append(key, value as string));
+
+        const resp = await fetch(form.action, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: params.toString(),
+          credentials: 'include',
+          redirect: 'follow',
+        });
+
+        return {
+          status: resp.status,
+          url: resp.url,
+          redirected: resp.redirected,
+          ok: resp.ok,
+        };
+      });
+
+      console.log('[MonotaRO] submitLoginForm: fetch result:', JSON.stringify(result));
+
+      if (result && !('error' in result)) {
+        // Navigate to the response URL (cookies are already set by fetch)
+        const targetUrl = result.redirected ? result.url : this.getTopPageUrl();
+        await this.page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await this.page.waitForTimeout(2000);
+
+        const currentUrl = this.page.url();
+        console.log(`[MonotaRO] submitLoginForm: after fetch nav, URL: ${currentUrl}`);
+
+        if (!currentUrl.includes('/login')) {
+          console.log('[MonotaRO] submitLoginForm: strategy 4 succeeded');
+          return true;
+        }
+      }
+    } catch (e) {
+      console.log('[MonotaRO] submitLoginForm: strategy 4 error:', (e as Error).message);
+    }
+
+    // All strategies exhausted
     console.log('[MonotaRO] submitLoginForm: ALL strategies failed. URL:', this.page.url());
     await this.dumpFormStructure();
     await this.takeScreenshot('login_submit_all_failed');
@@ -614,6 +689,50 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
       }
     } catch (e) {
       console.log('[MonotaRO] loginViaCartPage: strategy 3 error:', (e as Error).message);
+    }
+
+    // Strategy 4: Direct fetch POST (same as submitLoginForm strategy 4)
+    console.log('[MonotaRO] loginViaCartPage: strategy 4 — direct fetch POST');
+    try {
+      const result = await this.page.evaluate(async () => {
+        const pw = document.querySelector('input[name="password"]');
+        const form = pw?.closest('form') as HTMLFormElement | null;
+        if (!form) return { error: 'form not found' };
+
+        const ct = form.querySelector('input[name="client_time"]') as HTMLInputElement;
+        if (ct) ct.value = Date.now().toString();
+        const ctz = form.querySelector('input[name="client_time_zone"]') as HTMLInputElement;
+        if (ctz) ctz.value = (new Date().getTimezoneOffset() / -60).toString();
+
+        const formData = new FormData(form);
+        const params = new URLSearchParams();
+        formData.forEach((value, key) => params.append(key, value as string));
+
+        const resp = await fetch(form.action, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: params.toString(),
+          credentials: 'include',
+          redirect: 'follow',
+        });
+
+        return { status: resp.status, url: resp.url, redirected: resp.redirected, ok: resp.ok };
+      });
+
+      console.log('[MonotaRO] loginViaCartPage: fetch result:', JSON.stringify(result));
+
+      if (result && !('error' in result) && result.ok) {
+        const targetUrl = result.redirected ? result.url : CHECKOUT_URL;
+        await this.page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await this.page.waitForTimeout(2000);
+
+        if (!this.isCartPageUrl(this.page.url())) {
+          console.log('[MonotaRO] loginViaCartPage: left cart →', this.page.url());
+          return true;
+        }
+      }
+    } catch (e) {
+      console.log('[MonotaRO] loginViaCartPage: strategy 4 error:', (e as Error).message);
     }
 
     console.log('[MonotaRO] loginViaCartPage: all strategies failed');
