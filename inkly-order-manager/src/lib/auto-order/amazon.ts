@@ -292,17 +292,27 @@ export class AmazonAutoOrder extends BaseAutoOrder {
             !!document.getElementById('checkout-secondary-continue-button-id'),
           hasPrimeSkip:
             bodyText.includes('プライム無料体験を試さないで注文を続ける') ||
-            bodyText.includes('試さないで注文を続ける'),
+            bodyText.includes('試さないで注文を続ける') ||
+            bodyText.includes('Amazonプライム無料体験'),
           hasPlaceOrder:
             !!document.getElementById('submitOrderButtonId') ||
-            !!document.querySelector('input[name="placeYourOrder1"]'),
+            !!document.querySelector('input[name="placeYourOrder1"]') ||
+            !!document.querySelector('#bottomSubmitOrderButtonId'),
           hasOrderComplete:
             bodyText.includes('注文が確定しました') ||
             bodyText.includes('ご注文ありがとうございます') ||
+            bodyText.includes('Thank you, your order has been placed') ||
             !!document.querySelector('#orderDetails') ||
-            !!document.querySelector('.a-box.a-alert-success'),
+            !!document.querySelector('.a-box.a-alert-success') ||
+            !!document.querySelector('#widget-purchaseConfirmationStatus'),
           isCartPage:
             url.includes('/gp/cart') || url.includes('/cart/view'),
+          hasLoginForm:
+            !!document.querySelector('input#ap_email, input#ap_password') &&
+            (url.includes('ap/signin') || url.includes('ap/cvf')),
+          hasCvvInput:
+            !!document.querySelector('input[name="addCreditCardVerificationNumber"]') ||
+            !!document.querySelector('#spc-gcid-popover input[type="text"]'),
           url,
         };
       });
@@ -311,6 +321,8 @@ export class AmazonAutoOrder extends BaseAutoOrder {
 
       // Priority order: most definitive states first
       if (indicators.hasOrderComplete) return 'ORDER_COMPLETE';
+      if (indicators.hasLoginForm) return 'LOGIN_REQUIRED';
+      if (indicators.hasCvvInput) return 'CVV_ENTRY';
       if (indicators.hasPlaceOrder) return 'PLACE_ORDER';
       if (indicators.hasPrimeSkip) return 'PRIME_UPSELL';
       if (indicators.hasPaymentBtn && !indicators.isCartPage) return 'PAYMENT';
@@ -333,6 +345,10 @@ export class AmazonAutoOrder extends BaseAutoOrder {
         return this.clickPrimeSkip();
       case 'PLACE_ORDER':
         return this.clickPlaceOrder();
+      case 'LOGIN_REQUIRED':
+        return this.handleCheckoutLogin();
+      case 'CVV_ENTRY':
+        return this.handleCvvEntry();
       default:
         return false;
     }
@@ -424,7 +440,90 @@ export class AmazonAutoOrder extends BaseAutoOrder {
       'input[name="placeYourOrder1"]',
       '#submitOrderButtonId .a-button-input',
       'input[aria-labelledby="submitOrderButtonId-announce"]',
+      '#bottomSubmitOrderButtonId input[type="submit"]',
+      '#bottomSubmitOrderButtonId',
     ], 'PLACE_ORDER');
+  }
+
+  /** Handle login form that appears during checkout (session expired). */
+  private async handleCheckoutLogin(): Promise<boolean> {
+    if (!this.page || !this.credentials) {
+      console.log('[Amazon checkout] LOGIN_REQUIRED: no page or credentials');
+      return false;
+    }
+
+    try {
+      console.log('[Amazon checkout] LOGIN_REQUIRED: handling login during checkout');
+
+      // Check if password field is visible (might be email-first or password-only)
+      const hasPassword = await this.page.locator('input#ap_password, input[name="password"]').count() > 0;
+      const hasEmail = await this.page.locator('input#ap_email, input[name="email"]').count() > 0;
+
+      if (hasEmail) {
+        await this.page.fill('input#ap_email, input[name="email"]', this.credentials.username);
+        console.log('[Amazon checkout] LOGIN_REQUIRED: filled email');
+
+        // Check if there's a continue button (email-first flow)
+        const hasContinue = await this.page.locator('input#continue, #continue').count() > 0;
+        if (hasContinue && !hasPassword) {
+          await this.page.click('input#continue, #continue');
+          await this.page.waitForTimeout(3000);
+          await this.safeWaitForNetworkIdle();
+        }
+      }
+
+      // Fill password
+      const hasPasswordNow = await this.page.locator('input#ap_password, input[name="password"]').count() > 0;
+      if (hasPasswordNow) {
+        await this.page.fill('input#ap_password, input[name="password"]', this.credentials.password);
+        console.log('[Amazon checkout] LOGIN_REQUIRED: filled password');
+        await this.page.click('input#signInSubmit, #signInSubmit');
+        await this.page.waitForTimeout(3000);
+        await this.safeWaitForNetworkIdle();
+        console.log('[Amazon checkout] LOGIN_REQUIRED: submitted, URL:', this.page.url());
+      }
+
+      await this.takeScreenshot('checkout_login_handled');
+      return true;
+    } catch (e) {
+      console.log('[Amazon checkout] LOGIN_REQUIRED: error:', (e as Error).message);
+      await this.takeScreenshot('checkout_login_error');
+      return false;
+    }
+  }
+
+  /** Handle CVV/security code entry during checkout. */
+  private async handleCvvEntry(): Promise<boolean> {
+    if (!this.page) return false;
+
+    try {
+      console.log('[Amazon checkout] CVV_ENTRY: looking for CVV input');
+
+      // Amazon sometimes shows a CVV popup. Try to find and click the continue button
+      // without entering CVV (if the card is already saved with CVV).
+      // If CVV is required, we cannot auto-fill it for security reasons.
+
+      // Try clicking the confirm/continue button on the CVV dialog
+      const cvvContinueClicked = await this.tryClickSelectors([
+        '#spc-gcid-popover .a-button-primary input[type="submit"]',
+        '#spc-gcid-popover .a-button-primary',
+        '#checkout-primary-continue-button-id input[type="submit"]',
+        '#checkout-primary-continue-button-id',
+      ], 'CVV_ENTRY');
+
+      if (cvvContinueClicked) {
+        console.log('[Amazon checkout] CVV_ENTRY: clicked continue button');
+        await this.page.waitForTimeout(2000);
+        return true;
+      }
+
+      console.log('[Amazon checkout] CVV_ENTRY: could not handle CVV input automatically');
+      await this.takeScreenshot('checkout_cvv_required');
+      return false;
+    } catch (e) {
+      console.log('[Amazon checkout] CVV_ENTRY: error:', (e as Error).message);
+      return false;
+    }
   }
 
   /** Try clicking selectors: scrollIntoView → getBoundingBox → mouse.click, with force-click fallback. */
@@ -530,4 +629,4 @@ export class AmazonAutoOrder extends BaseAutoOrder {
   }
 }
 
-type CheckoutState = 'CART' | 'PAYMENT' | 'PRIME_UPSELL' | 'PLACE_ORDER' | 'ORDER_COMPLETE' | 'UNKNOWN';
+type CheckoutState = 'CART' | 'PAYMENT' | 'PRIME_UPSELL' | 'PLACE_ORDER' | 'ORDER_COMPLETE' | 'LOGIN_REQUIRED' | 'CVV_ENTRY' | 'UNKNOWN';
