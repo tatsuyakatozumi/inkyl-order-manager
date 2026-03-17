@@ -7,6 +7,26 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
     super('MonotaRO');
   }
 
+  /** Override: use Firefox instead of Chromium to avoid Akamai HTTP/2 protocol errors. */
+  async initialize(): Promise<void> {
+    console.log('[MonotaRO] initialize: launching Firefox');
+    const { firefox } = await import('playwright');
+
+    this.browser = await firefox.launch({
+      headless: true,
+      args: [],
+    });
+
+    const context = await this.browser.newContext({
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0',
+      locale: 'ja-JP',
+      viewport: { width: 1280, height: 800 },
+    });
+
+    this.page = await context.newPage();
+    this.loggedIn = false;
+  }
+
   getTopPageUrl(): string {
     return `${MONOTARO_BASE_URL}/`;
   }
