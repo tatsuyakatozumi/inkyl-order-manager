@@ -20,26 +20,55 @@ interface ItemsTableProps {
   items: ItemWithSupplier[];
   suppliers: SupplierOption[];
   categoryLargeOptions: string[];
-  categoryMediumOptions: string[];
-  categorySmallOptions: string[];
 }
 
 export default function ItemsTable({
   items,
   suppliers,
   categoryLargeOptions,
-  categoryMediumOptions,
-  categorySmallOptions,
 }: ItemsTableProps) {
   const [consumableFilter, setConsumableFilter] =
     useState<'all' | 'consumable' | 'non_consumable'>('all');
-  const [categoryFilter, setCategoryFilter] = useState('');
-  const [categoryMediumFilter, setCategoryMediumFilter] = useState('');
-  const [categorySmallFilter, setCategorySmallFilter] = useState('');
+  const [categoryFilter, setCategoryFilterRaw] = useState('');
+  const [categoryMediumFilter, setCategoryMediumFilterRaw] = useState('');
+  const [categorySmallFilter, setCategorySmallFilterRaw] = useState('');
   const [supplierFilter, setSupplierFilter] = useState('');
   const [searchText, setSearchText] = useState('');
   const [editItem, setEditItem] = useState<Item | null | 'new'>(null);
   const [isPending, startTransition] = useTransition();
+
+  // 大分類を変更 → 中分類・小分類をリセット
+  function setCategoryFilter(v: string) {
+    setCategoryFilterRaw(v);
+    setCategoryMediumFilterRaw('');
+    setCategorySmallFilterRaw('');
+  }
+
+  // 中分類を変更 → 小分類をリセット
+  function setCategoryMediumFilter(v: string) {
+    setCategoryMediumFilterRaw(v);
+    setCategorySmallFilterRaw('');
+  }
+
+  // 中分類の選択肢: 大分類フィルタに該当するアイテムの中から算出
+  const filteredMediumOptions = useMemo(() => {
+    const pool = categoryFilter
+      ? items.filter((i) => i.category_large === categoryFilter)
+      : items;
+    return Array.from(new Set(pool.map((i) => i.category_medium))).sort();
+  }, [items, categoryFilter]);
+
+  // 小分類の選択肢: 大分類+中分類フィルタに該当するアイテムの中から算出
+  const filteredSmallOptions = useMemo(() => {
+    let pool = items;
+    if (categoryFilter) pool = pool.filter((i) => i.category_large === categoryFilter);
+    if (categoryMediumFilter) pool = pool.filter((i) => i.category_medium === categoryMediumFilter);
+    return Array.from(
+      new Set(
+        pool.map((i) => i.category_small).filter((v): v is string => v !== null && v !== ''),
+      ),
+    ).sort();
+  }, [items, categoryFilter, categoryMediumFilter]);
 
   const filtered = useMemo(() => {
     let result = items;
@@ -133,21 +162,21 @@ export default function ItemsTable({
             onChange={(e) => setCategoryMediumFilter(e.target.value)}
           >
             <option value="">All Medium Categories</option>
-            {categoryMediumOptions.map((c) => (
+            {filteredMediumOptions.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>
             ))}
           </select>
 
-          {categorySmallOptions.length > 0 && (
+          {filteredSmallOptions.length > 0 && (
             <select
               className="min-h-[44px] rounded border border-gray-300 px-3 py-2 text-sm"
               value={categorySmallFilter}
-              onChange={(e) => setCategorySmallFilter(e.target.value)}
+              onChange={(e) => setCategorySmallFilterRaw(e.target.value)}
             >
               <option value="">All Small Categories</option>
-              {categorySmallOptions.map((c) => (
+              {filteredSmallOptions.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>

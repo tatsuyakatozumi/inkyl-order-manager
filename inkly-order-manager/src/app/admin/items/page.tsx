@@ -48,25 +48,11 @@ export default async function ItemsPage() {
     new Set(allItems.map((i: any) => i.category_large as string)),
   ).sort();
 
-  const categoryMediumOptions = Array.from(
-    new Set(allItems.map((i: any) => i.category_medium as string)),
-  ).sort();
-
-  const categorySmallOptions = Array.from(
-    new Set(
-      allItems
-        .map((i: any) => i.category_small as string | null)
-        .filter((v: string | null): v is string => v !== null && v !== ''),
-    ),
-  ).sort();
-
   return (
     <ItemsTable
       items={allItems}
       suppliers={suppliersRes.data ?? []}
       categoryLargeOptions={categoryLargeOptions}
-      categoryMediumOptions={categoryMediumOptions}
-      categorySmallOptions={categorySmallOptions}
     />
   );
 }
