@@ -1,9 +1,8 @@
 ﻿'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import { AlertTriangle, ExternalLink, Image, ShoppingCart, Zap } from 'lucide-react';
+import { ExternalLink, Image, ShoppingCart } from 'lucide-react';
 import { updateManualOrderQuantity, updateOrderAdjustment } from '@/app/admin/orders/actions';
-import { useAutoOrderSetting } from '@/hooks/useAutoOrderSetting';
 
 type OrderStatus = 'draft' | 'confirmed' | 'ordered' | 'completed';
 
@@ -108,8 +107,7 @@ export function MonthlyOrders() {
   const [executing, setExecuting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [screenshotUrls, setScreenshotUrls] = useState<Record<string, string>>({});
-  const [confirming, setConfirming] = useState<string | null>(null);
-  const { autoOrderEnabled } = useAutoOrderSetting();
+  const [cartUrls, setCartUrls] = useState<Record<string, string>>({});
 
   const [autoOrders, setAutoOrders] = useState<CalculatedOrderItem[]>([]);
   const [manualOrders, setManualOrders] = useState<CalculatedOrderItem[]>([]);
@@ -187,23 +185,8 @@ export function MonthlyOrders() {
   }, [manualQuantities]);
 
   const handleExecuteOrder = useCallback(
-    async (
-      supplier: SupplierLite,
-      items: CalculatedOrderItem[],
-      autoConfirm: boolean,
-    ) => {
-      if (autoConfirm) {
-        const totalAmount = items.reduce(
-          (sum, o) => sum + o.final_quantity * (o.item.unit_price ?? 0),
-          0,
-        );
-        const ok = confirm(
-          `Confirm order for ${supplier.name}?\n\nItems: ${items.length}\nEstimated total: ¥${totalAmount.toLocaleString()}`,
-        );
-        if (!ok) return;
-      } else {
-        if (!confirm(`Add items to cart for ${supplier.name}?`)) return;
-      }
+    async (supplier: SupplierLite, items: CalculatedOrderItem[]) => {
+      if (!confirm(`Add items to cart for ${supplier.name}?`)) return;
 
       setExecuting(supplier.id);
       try {
@@ -213,7 +196,6 @@ export function MonthlyOrders() {
           body: JSON.stringify({
             supplierName: supplier.name,
             yearMonth,
-            autoConfirm,
             itemIds: items.map((i) => i.item_id),
           }),
         });
@@ -224,23 +206,21 @@ export function MonthlyOrders() {
         }
 
         const data = await res.json();
-        const newStatus = data.checkoutSuccess ? 'ordered' : 'confirmed';
 
         if (data.screenshotUrl) {
           setScreenshotUrls((prev) => ({ ...prev, [supplier.id]: data.screenshotUrl }));
+        }
+        if (data.cartUrl) {
+          setCartUrls((prev) => ({ ...prev, [supplier.id]: data.cartUrl }));
         }
 
         setAutoOrders((prev) =>
           prev.map((o) =>
             items.some((i) => i.item_id === o.item_id)
-              ? { ...o, order_status: newStatus as OrderStatus }
+              ? { ...o, order_status: 'confirmed' as OrderStatus }
               : o,
           ),
         );
-
-        if (autoConfirm && !data.checkoutSuccess) {
-          alert('Checkout failed. Items may still be in cart.');
-        }
       } catch (e: any) {
         alert(`Order execution failed: ${e.message}`);
       } finally {
@@ -249,47 +229,6 @@ export function MonthlyOrders() {
     },
     [yearMonth],
   );
-
-  const handleConfirmOrder = useCallback(async (supplier: SupplierLite, items: CalculatedOrderItem[]) => {
-    if (!confirm(`Confirm order for ${supplier.name}?`)) return;
-
-    setConfirming(supplier.id);
-    try {
-      const idempotencyKey = crypto.randomUUID();
-      const res = await fetch('/api/orders/confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          supplierName: supplier.name,
-          orderHistoryIds: items.map((i) => i.id),
-          idempotencyKey,
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      if (data.screenshotUrl) {
-        setScreenshotUrls((prev) => ({ ...prev, [supplier.id]: data.screenshotUrl }));
-      }
-      if (data.success) {
-        setAutoOrders((prev) =>
-          prev.map((o) =>
-            items.some((i) => i.item_id === o.item_id)
-              ? { ...o, order_status: 'ordered' }
-              : o,
-          ),
-        );
-      } else {
-        alert('Checkout failed. Cart should still contain items.');
-      }
-    } catch (e: any) {
-      alert(`Confirm failed: ${e.message}`);
-    } finally {
-      setConfirming(null);
-    }
-  }, []);
 
   const autoTotal = autoOrders.reduce((sum, o) => sum + o.final_quantity * (o.item.unit_price ?? 0), 0);
   const manualTotal = manualOrders.reduce((sum, o) => sum + o.final_quantity * (o.item.unit_price ?? 0), 0);
@@ -356,12 +295,10 @@ export function MonthlyOrders() {
               adjustments={adjustments}
               executing={executing}
               screenshotUrls={screenshotUrls}
-              confirming={confirming}
-              autoOrderEnabled={autoOrderEnabled}
+              cartUrls={cartUrls}
               onAdjustmentInput={handleAdjustmentInput}
               onAdjustmentCommit={handleAdjustmentCommit}
               onExecuteOrder={handleExecuteOrder}
-              onConfirmOrder={handleConfirmOrder}
             />
           )}
 
@@ -405,23 +342,19 @@ function AutoSection({
   adjustments,
   executing,
   screenshotUrls,
-  confirming,
-  autoOrderEnabled,
+  cartUrls,
   onAdjustmentInput,
   onAdjustmentCommit,
   onExecuteOrder,
-  onConfirmOrder,
 }: {
   orders: CalculatedOrderItem[];
   adjustments: Record<string, number>;
   executing: string | null;
   screenshotUrls: Record<string, string>;
-  confirming: string | null;
-  autoOrderEnabled: boolean | null;
+  cartUrls: Record<string, string>;
   onAdjustmentInput: (order: CalculatedOrderItem, value: number) => void;
   onAdjustmentCommit: (order: CalculatedOrderItem) => void;
-  onExecuteOrder: (supplier: SupplierLite, items: CalculatedOrderItem[], autoConfirm: boolean) => void;
-  onConfirmOrder: (supplier: SupplierLite, items: CalculatedOrderItem[]) => void;
+  onExecuteOrder: (supplier: SupplierLite, items: CalculatedOrderItem[]) => void;
 }) {
   const grouped = groupBySupplier(orders);
 
@@ -514,27 +447,25 @@ function AutoSection({
 
             {group.supplier.auto_order_supported && (
               <div className="border-t px-4 py-3">
-                <div className="flex flex-col gap-2 md:flex-row md:gap-3">
-                  <button
-                    onClick={() => onExecuteOrder(group.supplier, group.items, false)}
-                    disabled={executing === supplierId}
-                    className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {executing === supplierId ? 'Processing...' : <><ShoppingCart className="h-4 w-4" />Add to cart only</>}
-                  </button>
-                  <button
-                    onClick={() => onExecuteOrder(group.supplier, group.items, true)}
-                    disabled={executing === supplierId || autoOrderEnabled === false}
-                    className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
-                  >
-                    {executing === supplierId ? 'Processing...' : <><Zap className="h-4 w-4" />Confirm order</>}
-                  </button>
-                </div>
+                <button
+                  onClick={() => onExecuteOrder(group.supplier, group.items)}
+                  disabled={executing === supplierId}
+                  className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {executing === supplierId ? 'Processing...' : <><ShoppingCart className="h-4 w-4" />Add to cart</>}
+                </button>
 
-                {autoOrderEnabled === false && (
-                  <div className="mt-2 flex items-start gap-2 rounded-md bg-yellow-50 border border-yellow-200 p-2 text-xs text-yellow-800">
-                    <AlertTriangle className="mt-0.5 h-3 w-3 flex-shrink-0" />
-                    <span>Auto-order (checkout) is disabled. Enable in Settings.</span>
+                {cartUrls[supplierId] && (
+                  <div className="mt-3">
+                    <a
+                      href={cartUrls[supplierId]}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      Open cart to checkout
+                    </a>
                   </div>
                 )}
 
@@ -549,19 +480,6 @@ function AutoSection({
                       alt={`${group.supplier.name} cart screenshot`}
                       className="max-h-64 rounded border object-contain"
                     />
-                  </div>
-                )}
-
-                {group.items.some((i) => i.order_status === 'confirmed') && screenshotUrls[supplierId] && (
-                  <div className="mt-3">
-                    <button
-                      onClick={() => onConfirmOrder(group.supplier, group.items)}
-                      disabled={confirming === supplierId || autoOrderEnabled === false}
-                      className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
-                    >
-                      <Zap className="h-4 w-4" />
-                      {confirming === supplierId ? 'Confirming...' : 'Confirm order'}
-                    </button>
                   </div>
                 )}
               </div>

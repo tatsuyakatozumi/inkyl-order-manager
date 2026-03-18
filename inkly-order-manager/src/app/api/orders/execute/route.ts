@@ -11,7 +11,7 @@ function normalizeRel<T>(value: T | T[] | null | undefined): T | null {
 
 export async function POST(request: NextRequest) {
   try {
-    const { supplierName, yearMonth, autoConfirm, itemIds } =
+    const { supplierName, yearMonth, itemIds } =
       await request.json();
 
     if (!supplierName || !yearMonth || !Array.isArray(itemIds)) {
@@ -89,10 +89,10 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    const { results, checkoutSuccess, cartUrl, screenshotPath } = await autoOrder.executeOrder(
+    const { results, cartUrl, screenshotPath } = await autoOrder.executeOrder(
       credentials,
       orderItems,
-      autoConfirm ?? false,
+      false,
     );
 
     let screenshotUrl: string | null = null;
@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
       console.error('Failed to insert order history:', historyError);
     }
 
-    const newStatus = checkoutSuccess ? 'ordered' : 'confirmed';
+    const newStatus = 'confirmed';
     const { error: updateError } = await supabase
       .from('ord_monthly_orders')
       .update({ order_status: newStatus })
@@ -148,8 +148,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       supplier: supplierName,
       yearMonth,
-      autoConfirm: autoConfirm ?? false,
-      checkoutSuccess,
       cartUrl,
       results,
       screenshotUrl,

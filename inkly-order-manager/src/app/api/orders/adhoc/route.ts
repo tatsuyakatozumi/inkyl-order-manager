@@ -17,10 +17,9 @@ function normalizeRel<T>(value: T | T[] | null | undefined): T | null {
 
 export async function POST(request: NextRequest) {
   try {
-    const { items, executeAutoOrder, autoConfirm } = (await request.json()) as {
+    const { items, executeAutoOrder } = (await request.json()) as {
       items: AdhocItem[];
       executeAutoOrder: boolean;
-      autoConfirm?: boolean;
     };
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -175,10 +174,10 @@ export async function POST(request: NextRequest) {
       try {
         const decrypted = decryptCredentials(supplier.credentials_encrypted);
         const credentials: { username: string; password: string } = JSON.parse(decrypted);
-        const { results, checkoutSuccess, cartUrl, screenshotPath } = await autoOrder.executeOrder(
+        const { results, cartUrl, screenshotPath } = await autoOrder.executeOrder(
           credentials,
           group.orderItems,
-          autoConfirm ?? false,
+          false,
         );
 
         let screenshotUrl: string | null = null;
@@ -198,7 +197,6 @@ export async function POST(request: NextRequest) {
             status: result.status,
             errorMessage: result.errorMessage ?? null,
             cartUrl,
-            checkoutSuccess,
             screenshotUrl,
             screenshotExpiresAt,
           });

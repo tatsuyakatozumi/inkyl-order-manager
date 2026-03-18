@@ -11,12 +11,9 @@ import {
   Save,
   ShoppingCart,
   X,
-  XCircle,
-  Zap,
 } from 'lucide-react';
 import { ItemSelectModal, type SelectableItem } from './ItemSelectModal';
 import { showToast } from '@/components/ui/Toast';
-import { useAutoOrderSetting } from '@/hooks/useAutoOrderSetting';
 
 interface OrderLineItem {
   item: SelectableItem;
@@ -26,9 +23,9 @@ interface OrderLineItem {
 interface AutoOrderResultItem {
   itemId: string;
   supplierName: string;
-  status: 'ordered' | 'cart_added' | 'failed' | 'manual_required';
+  status: 'cart_added' | 'failed' | 'manual_required';
   errorMessage: string | null;
-  checkoutSuccess?: boolean;
+  cartUrl?: string | null;
   screenshotUrl?: string | null;
   screenshotExpiresAt?: string | null;
 }
@@ -68,11 +65,6 @@ export function AdhocOrderForm() {
   const [submitting, setSubmitting] = useState(false);
   const [orderComplete, setOrderComplete] = useState(false);
   const [autoResults, setAutoResults] = useState<AutoOrderResultItem[]>([]);
-  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
-  const [lastAutoConfirm, setLastAutoConfirm] = useState(false);
-  const [confirming, setConfirming] = useState<string | null>(null);
-  const { autoOrderEnabled } = useAutoOrderSetting();
-  const [orderHistoryIds, setOrderHistoryIds] = useState<string[]>([]);
 
   const handleItemSelect = useCallback(
     (item: SelectableItem) => {
@@ -110,9 +102,7 @@ export function AdhocOrderForm() {
   };
 
   const executeSubmit = useCallback(
-    async (executeAutoOrder: boolean, autoConfirm: boolean) => {
-      setConfirmDialogOpen(false);
-      setLastAutoConfirm(autoConfirm);
+    async (executeAutoOrder: boolean) => {
       setSubmitting(true);
       try {
         const res = await fetch('/api/orders/adhoc', {
@@ -125,7 +115,6 @@ export function AdhocOrderForm() {
               unitPrice: l.item.unit_price ?? 0,
             })),
             executeAutoOrder,
-            autoConfirm,
           }),
         });
 
@@ -135,7 +124,6 @@ export function AdhocOrderForm() {
         }
 
         const data = await res.json();
-        setOrderHistoryIds(data.orderIds ?? []);
 
         if (executeAutoOrder && data.autoOrderResults) {
           setAutoResults(data.autoOrderResults);
@@ -144,7 +132,7 @@ export function AdhocOrderForm() {
               r.status === 'failed' || r.status === 'manual_required',
           );
           if (failed.length === 0) {
-            showToast(autoConfirm ? 'Order confirmed.' : 'Items added to cart.', 'success');
+            showToast('Items added to cart.', 'success');
           } else if (failed.length < data.autoOrderResults.length) {
             showToast('Some items failed to process.', 'warning');
           } else {
@@ -165,81 +153,23 @@ export function AdhocOrderForm() {
     [lines],
   );
 
-  const handleAutoOrderClick = useCallback(
-    (autoConfirm: boolean) => {
-      if (!validate()) return;
+  const handleAutoOrderClick = useCallback(() => {
+    if (!validate()) return;
 
-      if (autoConfirm) {
-        setConfirmDialogOpen(true);
-        return;
-      }
+    const grouped = groupBySupplier(lines);
+    const autoSuppliers = Array.from(grouped.values())
+      .filter((g) => g.supplier.auto_order_supported)
+      .map((g) => g.supplier.name);
 
-      const grouped = groupBySupplier(lines);
-      const autoSuppliers = Array.from(grouped.values())
-        .filter((g) => g.supplier.auto_order_supported)
-        .map((g) => g.supplier.name);
+    if (autoSuppliers.length > 0) {
+      const ok = confirm(
+        `Add items to cart for the following suppliers?\n\n${autoSuppliers.join(', ')}`,
+      );
+      if (!ok) return;
+    }
 
-      if (autoSuppliers.length > 0) {
-        const ok = confirm(
-          `Add items to cart for the following suppliers?\n\n${autoSuppliers.join(', ')}`,
-        );
-        if (!ok) return;
-      }
-
-      executeSubmit(true, false);
-    },
-    [lines, executeSubmit],
-  );
-
-  const handleConfirmOrder = useCallback(
-    async (supplierName: string) => {
-      if (!confirm(`Confirm order for ${supplierName}?`)) return;
-
-      setConfirming(supplierName);
-      try {
-        const idempotencyKey = crypto.randomUUID();
-        const res = await fetch('/api/orders/confirm', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            supplierName,
-            orderHistoryIds,
-            idempotencyKey,
-          }),
-        });
-
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.error ?? `HTTP ${res.status}`);
-        }
-
-        const data = await res.json();
-
-        setAutoResults((prev) =>
-          prev.map((r) => {
-            if (r.supplierName !== supplierName) return r;
-            return {
-              ...r,
-              status: data.status === 'ordered' ? 'ordered' : r.status,
-              screenshotUrl: data.screenshotUrl ?? r.screenshotUrl,
-              screenshotExpiresAt: data.screenshotExpiresAt ?? r.screenshotExpiresAt,
-            };
-          }),
-        );
-
-        if (data.success) {
-          showToast(`${supplierName}: order confirmed`, 'success');
-        } else {
-          showToast(`${supplierName}: checkout failed`, 'error');
-        }
-      } catch (e: any) {
-        showToast(e.message ?? 'Unexpected error occurred.', 'error');
-      } finally {
-        setConfirming(null);
-      }
-    },
-    [orderHistoryIds],
-  );
+    executeSubmit(true);
+  }, [lines, executeSubmit]);
 
   const grouped = groupBySupplier(lines);
   const grandTotal = lines.reduce((sum, l) => {
@@ -255,31 +185,17 @@ export function AdhocOrderForm() {
             <div className="rounded-lg border bg-white p-4 shadow-sm">
               <h3 className="mb-2 text-sm font-semibold text-gray-900">Auto-order Result</h3>
 
-              {lastAutoConfirm ? (
-                autoResults.some((r) => r.status === 'ordered') ? (
-                  <div className="mb-3 flex items-start gap-2 rounded-md bg-green-50 p-3 text-sm text-green-800">
-                    <CheckCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                    <span>Order has been confirmed.</span>
-                  </div>
-                ) : (
-                  <div className="mb-3 flex items-start gap-2 rounded-md bg-red-50 p-3 text-sm text-red-800">
-                    <XCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                    <span>Checkout failed. Items may still be in cart.</span>
-                  </div>
-                )
-              ) : (
-                autoResults.some((r) => r.status === 'cart_added') && (
-                  <div className="mb-3 flex items-start gap-2 rounded-md bg-blue-50 p-3 text-sm text-blue-800">
-                    <CheckCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                    <span>Items were added to cart. Review screenshot and confirm.</span>
-                  </div>
-                )
+              {autoResults.some((r) => r.status === 'cart_added') && (
+                <div className="mb-3 flex items-start gap-2 rounded-md bg-blue-50 p-3 text-sm text-blue-800">
+                  <CheckCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  <span>Items were added to cart. Please review and complete checkout manually.</span>
+                </div>
               )}
 
               {Array.from(groupResultsBySupplier(autoResults).entries()).map(
                 ([supplierName, results]) => {
                   const screenshotUrl = results[0]?.screenshotUrl;
-                  const hasCartItems = results.some((r) => r.status === 'cart_added');
+                  const cartUrl = results[0]?.cartUrl;
 
                   return (
                     <div key={supplierName} className="mb-4 rounded border bg-gray-50 p-3">
@@ -288,25 +204,35 @@ export function AdhocOrderForm() {
                       <div className="space-y-1">
                         {results.map((r) => (
                           <div key={r.itemId} className="flex items-center gap-2 text-sm">
-                            {r.status === 'ordered' ? (
-                              <CheckCircle className="h-4 w-4 text-green-600" />
-                            ) : r.status === 'cart_added' ? (
+                            {r.status === 'cart_added' ? (
                               <CheckCircle className="h-4 w-4 text-blue-600" />
                             ) : (
                               <AlertTriangle className="h-4 w-4 text-yellow-600" />
                             )}
                             <span className="text-gray-600">
-                              {r.status === 'ordered'
-                                ? 'Order confirmed'
-                                : r.status === 'cart_added'
-                                  ? 'Added to cart'
-                                  : r.status === 'manual_required'
-                                    ? 'Manual order required'
-                                    : `Failed: ${r.errorMessage ?? ''}`}
+                              {r.status === 'cart_added'
+                                ? 'Added to cart'
+                                : r.status === 'manual_required'
+                                  ? 'Manual order required'
+                                  : `Failed: ${r.errorMessage ?? ''}`}
                             </span>
                           </div>
                         ))}
                       </div>
+
+                      {cartUrl && (
+                        <div className="mt-3">
+                          <a
+                            href={cartUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                            Open cart to checkout
+                          </a>
+                        </div>
+                      )}
 
                       {screenshotUrl && (
                         <div className="mt-3">
@@ -319,22 +245,6 @@ export function AdhocOrderForm() {
                             alt={`${supplierName} cart screenshot`}
                             className="max-h-64 rounded border object-contain"
                           />
-                        </div>
-                      )}
-
-                      {!lastAutoConfirm && hasCartItems && (
-                        <div className="mt-3">
-                          {autoOrderEnabled === false && (
-                            <p className="mb-2 text-xs text-yellow-700">Auto-order (checkout) is disabled in Settings.</p>
-                          )}
-                          <button
-                            onClick={() => handleConfirmOrder(supplierName)}
-                            disabled={confirming === supplierName || autoOrderEnabled === false}
-                            className="inline-flex min-h-[44px] items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50"
-                          >
-                            <Zap className="h-4 w-4" />
-                            {confirming === supplierName ? 'Confirming...' : 'Confirm Order'}
-                          </button>
                         </div>
                       )}
                     </div>
@@ -355,8 +265,6 @@ export function AdhocOrderForm() {
               onClick={() => {
                 setOrderComplete(false);
                 setAutoResults([]);
-                setLastAutoConfirm(false);
-                setOrderHistoryIds([]);
               }}
               className="min-h-[44px] text-left text-sm font-medium text-gray-600 hover:text-gray-800"
             >
@@ -477,7 +385,7 @@ export function AdhocOrderForm() {
 
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-4">
                 <button
-                  onClick={() => executeSubmit(false, false)}
+                  onClick={() => executeSubmit(false)}
                   disabled={submitting}
                   className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-md bg-gray-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-gray-700 disabled:opacity-50 md:w-auto"
                 >
@@ -485,29 +393,14 @@ export function AdhocOrderForm() {
                   {submitting ? 'Saving...' : 'Save only'}
                 </button>
                 <button
-                  onClick={() => handleAutoOrderClick(false)}
+                  onClick={handleAutoOrderClick}
                   disabled={submitting}
                   className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 md:w-auto"
                 >
                   <ShoppingCart className="h-4 w-4" />
-                  {submitting ? 'Running...' : 'Add to cart only'}
-                </button>
-                <button
-                  onClick={() => handleAutoOrderClick(true)}
-                  disabled={submitting || autoOrderEnabled === false}
-                  className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-md bg-red-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-red-700 disabled:opacity-50 md:w-auto"
-                >
-                  <Zap className="h-4 w-4" />
-                  {submitting ? 'Running...' : 'Confirm order'}
+                  {submitting ? 'Running...' : 'Add to cart'}
                 </button>
               </div>
-
-              {autoOrderEnabled === false && (
-                <div className="flex items-start gap-2 rounded-md bg-yellow-50 border border-yellow-200 p-3 text-sm text-yellow-800">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                  <span>Auto-order (checkout) is disabled. Cart addition is available. Enable in Settings.</span>
-                </div>
-              )}
             </div>
           )}
 
@@ -517,62 +410,6 @@ export function AdhocOrderForm() {
             </div>
           )}
         </>
-      )}
-
-      {confirmDialogOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setConfirmDialogOpen(false);
-          }}
-        >
-          <div className="max-h-[85vh] w-full overflow-y-auto rounded-t-2xl bg-white p-6 shadow-xl md:mx-4 md:max-h-[90vh] md:max-w-lg md:rounded-lg">
-            <div className="mb-4 flex items-center gap-2 text-lg font-bold text-red-700">
-              <AlertTriangle className="h-5 w-5" />
-              Confirm final order?
-            </div>
-            <p className="mb-4 text-sm text-gray-700">
-              This will proceed checkout on supplier websites automatically.
-            </p>
-
-            <div className="mb-4 space-y-2">
-              {Array.from(grouped.entries()).map(([supplierId, group]) => {
-                const subtotal = group.lines.reduce((sum, l) => {
-                  const qty = typeof l.quantity === 'number' ? l.quantity : 0;
-                  return sum + qty * (l.item.unit_price ?? 0);
-                }, 0);
-                return (
-                  <div key={supplierId} className="rounded border bg-gray-50 p-3 text-sm">
-                    <div className="flex justify-between font-medium text-gray-900">
-                      <span>{group.supplier.name}</span>
-                      <span>{group.lines.length} items</span>
-                    </div>
-                    <div className="mt-1 text-right text-gray-600">Subtotal: {formatCurrency(subtotal)}</div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="rounded border bg-yellow-50 p-3 text-sm font-bold text-gray-900">
-              Grand Total: {formatCurrency(grandTotal)}
-            </div>
-
-            <div className="mt-6 flex flex-col gap-2 md:flex-row md:justify-end">
-              <button
-                onClick={() => setConfirmDialogOpen(false)}
-                className="min-h-[44px] rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => executeSubmit(true, true)}
-                className="min-h-[44px] rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700"
-              >
-                Confirm Order
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       <ItemSelectModal
