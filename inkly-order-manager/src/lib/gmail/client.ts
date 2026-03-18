@@ -18,15 +18,53 @@ export async function fetchShopifyVerificationCode(
   maxWaitMs = 90_000,
   intervalMs = 5_000,
 ): Promise<string | null> {
-  const clientId = process.env.GMAIL_CLIENT_ID;
-  const clientSecret = process.env.GMAIL_CLIENT_SECRET;
+  // Support both env var formats:
+  // 1. GMAIL_CREDENTIALS_JSON + GMAIL_TOKEN_JSON (credentials.json & token.json as JSON strings)
+  // 2. GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET (individual env vars)
+  let clientId: string | undefined;
+  let clientSecret: string | undefined;
+  let refreshToken = options.refreshToken;
+
+  if (process.env.GMAIL_TOKEN_JSON) {
+    try {
+      const tokenJson = JSON.parse(process.env.GMAIL_TOKEN_JSON);
+      clientId = tokenJson.client_id;
+      clientSecret = tokenJson.client_secret;
+      if (!refreshToken && tokenJson.refresh_token) {
+        refreshToken = tokenJson.refresh_token;
+      }
+    } catch (e) {
+      console.error('[Gmail] Failed to parse GMAIL_TOKEN_JSON:', e);
+    }
+  }
+
+  if (!clientId && process.env.GMAIL_CREDENTIALS_JSON) {
+    try {
+      const credJson = JSON.parse(process.env.GMAIL_CREDENTIALS_JSON);
+      const installed = credJson.installed ?? credJson.web ?? credJson;
+      clientId = installed.client_id;
+      clientSecret = installed.client_secret;
+    } catch (e) {
+      console.error('[Gmail] Failed to parse GMAIL_CREDENTIALS_JSON:', e);
+    }
+  }
+
+  // Fallback to individual env vars
+  clientId = clientId ?? process.env.GMAIL_CLIENT_ID;
+  clientSecret = clientSecret ?? process.env.GMAIL_CLIENT_SECRET;
+
   if (!clientId || !clientSecret) {
-    console.error('[Gmail] GMAIL_CLIENT_ID or GMAIL_CLIENT_SECRET not set');
+    console.error('[Gmail] Gmail API credentials not configured');
+    return null;
+  }
+
+  if (!refreshToken) {
+    console.error('[Gmail] No refresh token available');
     return null;
   }
 
   const oauth2 = new google.auth.OAuth2(clientId, clientSecret);
-  oauth2.setCredentials({ refresh_token: options.refreshToken });
+  oauth2.setCredentials({ refresh_token: refreshToken });
 
   const gmail = google.gmail({ version: 'v1', auth: oauth2 });
 
