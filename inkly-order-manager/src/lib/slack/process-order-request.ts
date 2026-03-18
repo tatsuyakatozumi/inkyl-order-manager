@@ -140,7 +140,7 @@ export async function processOrderRequest(event: SlackEvent): Promise<void> {
           JSON.parse(decrypted);
 
         // Always cart-only (autoConfirm=false)
-        const { results, screenshotPath } = await autoOrder.executeOrder(
+        const { results, screenshotPath, cartUrl } = await autoOrder.executeOrder(
           credentials,
           orderItems,
           false,
@@ -191,6 +191,9 @@ export async function processOrderRequest(event: SlackEvent): Promise<void> {
               ? ':shopping_trolley:'
               : ':warning:';
           resultLines.push(`  ${icon} ${item.name} x${item.quantity}`);
+        }
+        if (cartUrl) {
+          resultLines.push(`  :shopping_bags: <${cartUrl}|カートを確認>`);
         }
         if (screenshotUrl) {
           resultLines.push(`  :camera: <${screenshotUrl}|カート画面スクリーンショット>`);
