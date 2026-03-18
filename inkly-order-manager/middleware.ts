@@ -11,11 +11,15 @@ function expectedToken(): string {
 export function middleware(request: NextRequest) {
   const session = request.cookies.get('admin_session')?.value;
   if (!session || session !== expectedToken()) {
+    // API routes: return 401 JSON instead of redirect
+    if (request.nextUrl.pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
     return NextResponse.redirect(new URL('/login', request.url));
   }
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ['/admin/:path*', '/'],
+  matcher: ['/admin/:path*', '/', '/api/orders/:path*'],
 };
