@@ -24,7 +24,9 @@ export function SupplierEditModal({ supplier, onClose }: SupplierEditModalProps)
   );
   const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
+  const [gmailRefreshToken, setGmailRefreshToken] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showGmailToken, setShowGmailToken] = useState(false);
   const [hasExistingCredentials, setHasExistingCredentials] = useState(false);
   const [credentialsLoaded, setCredentialsLoaded] = useState(false);
   const [leadTimeDays, setLeadTimeDays] = useState(
@@ -45,6 +47,7 @@ export function SupplierEditModal({ supplier, onClose }: SupplierEditModalProps)
       if (result.success && result.data) {
         setLoginId(result.data.username);
         setPassword(result.data.password);
+        setGmailRefreshToken(result.data.gmail_refresh_token ?? '');
       }
       setCredentialsLoaded(true);
     })();
@@ -62,8 +65,12 @@ export function SupplierEditModal({ supplier, onClose }: SupplierEditModalProps)
         notes: notes || null,
       };
 
-      if (loginId || password) {
-        data.credentials = JSON.stringify({ username: loginId, password });
+      if (loginId || password || gmailRefreshToken) {
+        const creds: Record<string, string> = { username: loginId, password };
+        if (gmailRefreshToken) {
+          creds.gmail_refresh_token = gmailRefreshToken;
+        }
+        data.credentials = JSON.stringify(creds);
       }
 
       const result = await updateSupplier(supplier.id, data);
@@ -202,6 +209,38 @@ export function SupplierEditModal({ supplier, onClose }: SupplierEditModalProps)
             {hasExistingCredentials && credentialsLoaded && !password && (
               <p className="mt-1 text-xs text-gray-400">設定済み。変更する場合は再入力してください</p>
             )}
+          </div>
+
+          {/* Gmail Refresh Token (for Shopify email verification) */}
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">
+              Gmail Refresh Token
+            </label>
+            <p className="mb-1 text-xs text-gray-400">
+              Shopifyメール認証用（scripts/get-gmail-token.mjsで取得）
+            </p>
+            <div className="relative">
+              <input
+                type={showGmailToken ? 'text' : 'password'}
+                value={gmailRefreshToken}
+                onChange={(e) => setGmailRefreshToken(e.target.value)}
+                placeholder={credentialsLoaded ? '' : '読み込み中...'}
+                disabled={!credentialsLoaded}
+                className="min-h-[44px] w-full rounded-md border border-gray-300 px-3 py-2 pr-10 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-100"
+              />
+              <button
+                type="button"
+                onClick={() => setShowGmailToken(!showGmailToken)}
+                className="absolute right-2 top-1/2 min-h-[36px] min-w-[36px] -translate-y-1/2 rounded p-1 text-gray-400 hover:text-gray-600"
+                tabIndex={-1}
+              >
+                {showGmailToken ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Lead Time Days */}

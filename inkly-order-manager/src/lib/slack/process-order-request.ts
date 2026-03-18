@@ -137,7 +137,7 @@ export async function processOrderRequest(event: SlackEvent): Promise<void> {
       }
 
       try {
-        let credentials = { username: '', password: '' };
+        let credentials: { username: string; password: string; gmail_refresh_token?: string } = { username: '', password: '' };
         if (supplier.credentials_encrypted) {
           const decrypted = decryptCredentials(supplier.credentials_encrypted);
           credentials = JSON.parse(decrypted);

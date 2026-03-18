@@ -43,7 +43,7 @@ export async function updateSupplier(
 }
 
 export async function getSupplierCredentials(id: string): Promise<
-  | { success: true; data: { username: string; password: string } }
+  | { success: true; data: { username: string; password: string; gmail_refresh_token?: string } }
   | { success: false; error: string }
 > {
   const supabase = await createServerSupabaseClient();
@@ -67,7 +67,11 @@ export async function getSupplierCredentials(id: string): Promise<
     const parsed = JSON.parse(decrypted);
     return {
       success: true,
-      data: { username: parsed.username ?? '', password: parsed.password ?? '' },
+      data: {
+        username: parsed.username ?? '',
+        password: parsed.password ?? '',
+        gmail_refresh_token: parsed.gmail_refresh_token ?? '',
+      },
     };
   } catch {
     return { success: false, error: 'Failed to decrypt credentials' };

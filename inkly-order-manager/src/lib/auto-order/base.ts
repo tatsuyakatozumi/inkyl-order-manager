@@ -29,7 +29,7 @@ export abstract class BaseAutoOrder {
   protected page: Page | null = null;
   protected supplierName: string;
   protected loggedIn: boolean = false;
-  protected credentials: { username: string; password: string } | null = null;
+  protected credentials: { username: string; password: string; gmail_refresh_token?: string } | null = null;
 
   constructor(supplierName: string) {
     this.supplierName = supplierName;
@@ -92,7 +92,7 @@ export abstract class BaseAutoOrder {
   abstract getCartUrl(): string;
   abstract isLoggedIn(): Promise<boolean>;
   abstract navigateToLoginPage(): Promise<void>;
-  abstract login(credentials: { username: string; password: string }): Promise<boolean>;
+  abstract login(credentials: { username: string; password: string; gmail_refresh_token?: string }): Promise<boolean>;
   abstract addSingleItemToCart(quantity: number, spec: string | null): Promise<boolean>;
 
   // ---- Shared logic ----
@@ -108,7 +108,7 @@ export abstract class BaseAutoOrder {
     return path;
   }
 
-  async ensureLoggedIn(credentials: { username: string; password: string }): Promise<boolean> {
+  async ensureLoggedIn(credentials: { username: string; password: string; gmail_refresh_token?: string }): Promise<boolean> {
     console.log('[AutoOrder] ensureLoggedIn: starting');
     if (!this.page) return false;
     if (this.loggedIn) {
@@ -204,7 +204,7 @@ export abstract class BaseAutoOrder {
   }
 
   async executeOrder(
-    credentials: { username: string; password: string },
+    credentials: { username: string; password: string; gmail_refresh_token?: string },
     items: AutoOrderItem[],
   ): Promise<ExecuteOrderResult> {
     try {
