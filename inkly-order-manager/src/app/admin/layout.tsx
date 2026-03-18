@@ -9,6 +9,7 @@ import {
   Building2,
   ClipboardList,
   History,
+  LogOut,
   Menu,
   Package,
   Settings,
@@ -40,28 +41,44 @@ function SideNav({ pathname, onNavigate }: SideNavProps) {
     return pathname.startsWith(href);
   };
 
+  async function handleLogout() {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    window.location.href = '/login';
+  }
+
   return (
-    <nav className="flex flex-col gap-1 px-3 pb-4">
-      {menuItems.map((item) => {
-        const Icon = item.icon;
-        const active = isActive(item.href);
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            prefetch={false}
-            onClick={onNavigate}
-            className={`flex min-h-[44px] items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-              active
-                ? 'bg-gray-800 text-white'
-                : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-            }`}
-          >
-            <Icon className="h-5 w-5" />
-            {item.label}
-          </Link>
-        );
-      })}
+    <nav className="flex flex-1 flex-col gap-1 px-3 pb-4">
+      <div className="flex flex-col gap-1">
+        {menuItems.map((item) => {
+          const Icon = item.icon;
+          const active = isActive(item.href);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              prefetch={false}
+              onClick={onNavigate}
+              className={`flex min-h-[44px] items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                active
+                  ? 'bg-gray-800 text-white'
+                  : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+              }`}
+            >
+              <Icon className="h-5 w-5" />
+              {item.label}
+            </Link>
+          );
+        })}
+      </div>
+      <div className="mt-auto pt-4 border-t border-gray-700">
+        <button
+          onClick={handleLogout}
+          className="flex min-h-[44px] w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-gray-400 transition-colors hover:bg-gray-800 hover:text-white"
+        >
+          <LogOut className="h-5 w-5" />
+          Logout
+        </button>
+      </div>
     </nav>
   );
 }
@@ -94,7 +111,7 @@ export default function AdminLayout({
       </header>
 
       <div className="flex min-h-[calc(100vh-57px)] md:min-h-screen">
-        <aside className="hidden w-[240px] shrink-0 bg-gray-900 pt-4 md:block">
+        <aside className="hidden w-[240px] shrink-0 flex-col bg-gray-900 pt-4 md:flex">
           <div className="px-6 pb-4">
             <h1 className="text-xl font-bold text-white">Order Manager</h1>
           </div>
@@ -109,7 +126,7 @@ export default function AdminLayout({
               onClick={() => setMobileNavOpen(false)}
               aria-label="Close navigation menu"
             />
-            <aside className="relative z-10 h-full w-[280px] bg-gray-900 pt-4 shadow-xl">
+            <aside className="relative z-10 flex h-full w-[280px] flex-col bg-gray-900 pt-4 shadow-xl">
               <div className="mb-2 flex items-center justify-between px-6">
                 <h1 className="text-lg font-bold text-white">Order Manager</h1>
                 <button
