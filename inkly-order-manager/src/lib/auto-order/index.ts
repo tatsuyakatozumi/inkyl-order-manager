@@ -4,6 +4,7 @@ import { AmazonAutoOrder } from './amazon';
 import { AskulAutoOrder } from './askul';
 import { FlagTattooAutoOrder } from './flag-tattoo';
 import { RadiantAutoOrder } from './radiant';
+import { SolidInkAutoOrder } from './solid-ink';
 
 const ORDER_MODULES: Record<string, new () => BaseAutoOrder> = {
   'MonotaRO': MonotaroAutoOrder,
@@ -11,6 +12,7 @@ const ORDER_MODULES: Record<string, new () => BaseAutoOrder> = {
   'ASKUL': AskulAutoOrder,
   'FLAG Tattoo Supply': FlagTattooAutoOrder,
   'Radiant': RadiantAutoOrder,
+  'Solid Ink': SolidInkAutoOrder,
 };
 
 export function getAutoOrderModule(supplierName: string): BaseAutoOrder | null {

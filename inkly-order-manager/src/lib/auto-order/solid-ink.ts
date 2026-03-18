@@ -1,0 +1,142 @@
+import { BaseAutoOrder } from './base';
+
+const SOLID_INK_BASE_URL = 'https://thesolidink.com';
+
+export class SolidInkAutoOrder extends BaseAutoOrder {
+  constructor() {
+    super('Solid Ink');
+  }
+
+  getTopPageUrl(): string {
+    return `${SOLID_INK_BASE_URL}/`;
+  }
+
+  getCartUrl(): string {
+    return `${SOLID_INK_BASE_URL}/cart`;
+  }
+
+  async isLoggedIn(): Promise<boolean> {
+    if (!this.page) return false;
+    const el = await this.page.$(
+      'a[href*="logout"], a[href*="account"]:not([href*="login"]), .customer-links a[href*="account"]',
+    );
+    return el !== null;
+  }
+
+  async navigateToLoginPage(): Promise<void> {
+    if (!this.page) return;
+    const loginLink = await this.page.$(
+      'a[href*="login"], a:has-text("Log in"), a:has-text("Login"), a:has-text("Sign in")',
+    );
+    if (loginLink) {
+      await loginLink.click();
+      await this.page.waitForLoadState('domcontentloaded');
+    } else {
+      await this.page.goto(`${SOLID_INK_BASE_URL}/account/login`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
+    }
+  }
+
+  async login(credentials: { username: string; password: string }): Promise<boolean> {
+    if (!this.page) return false;
+    try {
+      // Try Shopify "Shop" login flow (popup-based)
+      console.log('[SolidInk] Attempting Shopify Shop login');
+      const shopButton = await this.page.$(
+        'button:has-text("Log in with Shop"), button:has-text("Shop Pay"), button:has-text("Shop"), a:has-text("Log in with Shop")',
+      );
+
+      if (shopButton) {
+        const [popup] = await Promise.all([
+          this.page.waitForEvent('popup', { timeout: 10000 }),
+          shopButton.click(),
+        ]);
+
+        await popup.waitForLoadState('domcontentloaded');
+        console.log('[SolidInk] Popup opened:', popup.url());
+        await popup.waitForTimeout(2000);
+
+        const emailVisible = await popup.$(`text=${credentials.username}`);
+
+        if (emailVisible) {
+          console.log('[SolidInk] Email found in popup, clicking Continue');
+          await popup.click(
+            'button:has-text("Continue"), button:has-text("続行する")',
+          );
+          await popup.waitForTimeout(3000);
+
+          const codeInput = await popup.$(
+            'input[name="code"], input[autocomplete="one-time-code"], input[inputmode="numeric"]',
+          );
+          if (codeInput) {
+            console.log('[SolidInk] Auth code requested, skipping login');
+            await this.takeScreenshot('login_auth_code_required');
+            await popup.close().catch(() => {});
+            return false;
+          }
+        } else {
+          console.log('[SolidInk] Email not found in popup, skipping login');
+          await this.takeScreenshot('login_email_not_found');
+          await popup.close().catch(() => {});
+          return false;
+        }
+
+        await popup.waitForEvent('close', { timeout: 10000 }).catch(() => {});
+        await this.page.waitForTimeout(2000);
+
+        const loggedIn = await this.isLoggedIn();
+        console.log('[SolidInk] Login result:', loggedIn);
+        return loggedIn;
+      }
+
+      // Fallback: standard email/password login
+      console.log('[SolidInk] Shop button not found, trying standard login');
+      await this.page.fill(
+        'input[name="customer[email]"], input[type="email"]',
+        credentials.username,
+      );
+      await this.page.fill(
+        'input[name="customer[password]"], input[type="password"]',
+        credentials.password,
+      );
+      await this.page.click('button[type="submit"], input[type="submit"]');
+      await this.page.waitForLoadState('domcontentloaded');
+      await this.page.waitForTimeout(3000);
+
+      return await this.isLoggedIn();
+    } catch (e) {
+      console.warn('[SolidInk] Login error:', e);
+      await this.takeScreenshot('login_error');
+      return false;
+    }
+  }
+
+  async addSingleItemToCart(quantity: number): Promise<boolean> {
+    if (!this.page) return false;
+
+    if (quantity > 1) {
+      const qtyInput = await this.page.$(
+        'input[name="quantity"], input.quantity-input, #quantity',
+      );
+      if (qtyInput) {
+        await qtyInput.fill('');
+        await qtyInput.fill(quantity.toString());
+      }
+    }
+
+    await this.page.click(
+      'button:has-text("Add to Cart"), button:has-text("Add to cart"), button[name="add"], .btn-add-to-cart, input[type="submit"][value*="Cart"]',
+    );
+
+    await this.page
+      .waitForSelector(
+        '.cart-notification, .cart-popup, [data-cart-notification], .success-message',
+        { timeout: 10000 },
+      )
+      .catch(() => null);
+
+    return true;
+  }
+}
