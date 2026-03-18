@@ -39,7 +39,7 @@ export default async function ItemsPage({
       .limit(200),
     supabase
       .from('ord_items')
-      .select('category_large')
+      .select('category_large,category_medium')
       .limit(500),
   ]);
 
@@ -71,6 +71,10 @@ export default async function ItemsPage({
     new Set((categoriesRes.data ?? []).map((c) => c.category_large)),
   ).sort();
 
+  const categoryMediumOptions = Array.from(
+    new Set((categoriesRes.data ?? []).map((c) => c.category_medium)),
+  ).sort();
+
   const normalizedItems = (itemsRes.data ?? []).map((item: any) => ({
     ...item,
     supplier: Array.isArray(item.supplier)
@@ -83,6 +87,7 @@ export default async function ItemsPage({
       items={normalizedItems}
       suppliers={suppliersRes.data ?? []}
       categoryLargeOptions={categoryLargeOptions}
+      categoryMediumOptions={categoryMediumOptions}
       page={page}
       totalCount={itemsRes.count ?? 0}
       pageSize={PAGE_SIZE}

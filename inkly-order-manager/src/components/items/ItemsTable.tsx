@@ -21,6 +21,7 @@ interface ItemsTableProps {
   items: ItemWithSupplier[];
   suppliers: SupplierOption[];
   categoryLargeOptions: string[];
+  categoryMediumOptions: string[];
   page: number;
   totalCount: number;
   pageSize: number;
@@ -30,6 +31,7 @@ export default function ItemsTable({
   items,
   suppliers,
   categoryLargeOptions,
+  categoryMediumOptions,
   page,
   totalCount,
   pageSize,
@@ -37,6 +39,7 @@ export default function ItemsTable({
   const [consumableFilter, setConsumableFilter] =
     useState<'all' | 'consumable' | 'non_consumable'>('all');
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [categoryMediumFilter, setCategoryMediumFilter] = useState('');
   const [supplierFilter, setSupplierFilter] = useState('');
   const [searchText, setSearchText] = useState('');
   const [editItem, setEditItem] = useState<Item | null | 'new'>(null);
@@ -51,6 +54,9 @@ export default function ItemsTable({
     if (categoryFilter) {
       result = result.filter((i) => i.category_large === categoryFilter);
     }
+    if (categoryMediumFilter) {
+      result = result.filter((i) => i.category_medium === categoryMediumFilter);
+    }
     if (supplierFilter) {
       result = result.filter((i) => i.supplier_id === supplierFilter);
     }
@@ -60,7 +66,7 @@ export default function ItemsTable({
     }
 
     return result;
-  }, [items, consumableFilter, categoryFilter, supplierFilter, searchText]);
+  }, [items, consumableFilter, categoryFilter, categoryMediumFilter, supplierFilter, searchText]);
 
   const hasPrevPage = page > 1;
   const hasNextPage = page * pageSize < totalCount;
@@ -119,6 +125,19 @@ export default function ItemsTable({
           >
             <option value="">All Categories</option>
             {categoryLargeOptions.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="min-h-[44px] rounded border border-gray-300 px-3 py-2 text-sm"
+            value={categoryMediumFilter}
+            onChange={(e) => setCategoryMediumFilter(e.target.value)}
+          >
+            <option value="">All Medium Categories</option>
+            {categoryMediumOptions.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>
@@ -215,12 +234,13 @@ export default function ItemsTable({
       </div>
 
       <div className="hidden overflow-x-auto rounded-lg border border-gray-200 bg-white md:block">
-        <table className="w-full min-w-[980px] text-sm">
+        <table className="w-full min-w-[1080px] text-sm">
           <thead>
             <tr className="border-b bg-gray-50 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
               <th className="px-4 py-3">Name</th>
               <th className="px-4 py-3">Spec</th>
-              <th className="px-4 py-3">Category</th>
+              <th className="px-4 py-3">Category (Large)</th>
+              <th className="px-4 py-3">Category (Medium)</th>
               <th className="px-4 py-3">Supplier</th>
               <th className="px-4 py-3 text-right">Unit Price</th>
               <th className="px-4 py-3 text-right">Per Visit</th>
@@ -232,7 +252,7 @@ export default function ItemsTable({
           <tbody className="divide-y divide-gray-100">
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-8 text-center text-gray-400">
+                <td colSpan={10} className="px-4 py-8 text-center text-gray-400">
                   No items found
                 </td>
               </tr>
@@ -255,9 +275,8 @@ export default function ItemsTable({
                   )}
                 </td>
                 <td className="px-4 py-3 text-gray-600">{item.spec ?? '-'}</td>
-                <td className="px-4 py-3 text-gray-600">
-                  {item.category_large} &gt; {item.category_medium}
-                </td>
+                <td className="px-4 py-3 text-gray-600">{item.category_large}</td>
+                <td className="px-4 py-3 text-gray-600">{item.category_medium}</td>
                 <td className="px-4 py-3 text-gray-600">{item.supplier?.name ?? '-'}</td>
                 <td className="px-4 py-3 text-right text-gray-600">{formatYen(item.unit_price)}</td>
                 <td className="px-4 py-3 text-right text-gray-600">{formatDecimal4(item.consumption_per_visit)}</td>
