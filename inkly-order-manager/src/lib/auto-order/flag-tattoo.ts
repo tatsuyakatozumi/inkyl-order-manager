@@ -1,6 +1,6 @@
 import { BaseAutoOrder } from './base';
 
-const FLAG_TATTOO_BASE_URL = 'https://www.flag-tattoosupply.com';
+const FLAG_TATTOO_BASE_URL = 'https://flag-ts.com';
 
 export class FlagTattooAutoOrder extends BaseAutoOrder {
   constructor() {
