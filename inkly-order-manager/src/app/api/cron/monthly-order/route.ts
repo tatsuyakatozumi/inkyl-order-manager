@@ -85,7 +85,6 @@ export async function POST(request: NextRequest) {
         fixedMonthlyConsumption: item.fixed_monthly_consumption,
         orderUnitQuantity: item.order_unit_quantity ?? 1,
         inventoryQuantity: inventoryQty,
-        isFirstOrder: inventoryQty !== null,
         adjustment: 0,
       });
 

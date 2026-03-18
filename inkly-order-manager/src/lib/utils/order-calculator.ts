@@ -5,7 +5,6 @@ export interface OrderCalculationInput {
   fixedMonthlyConsumption: number | null;
   orderUnitQuantity: number;
   inventoryQuantity: number | null;
-  isFirstOrder: boolean;
   adjustment: number;
 }
 
