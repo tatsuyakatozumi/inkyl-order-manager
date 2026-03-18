@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     const { data: monthlyOrders, error: ordersError } = await supabase
       .from('ord_monthly_orders')
       .select(
-        'id,item_id,final_quantity,item:ord_items!item_id(id,name,product_url,supplier_product_code,unit_price,supplier:ord_suppliers!supplier_id(id,name))',
+        'id,item_id,final_quantity,item:ord_items!item_id(id,name,spec,product_url,supplier_product_code,unit_price,supplier:ord_suppliers!supplier_id(id,name))',
       )
       .eq('year_month', yearMonth)
       .in('item_id', itemIds)
@@ -78,6 +78,7 @@ export async function POST(request: NextRequest) {
       name: item?.name ?? '',
       productUrl: item?.product_url ?? '',
       supplierProductCode: item?.supplier_product_code ?? null,
+      spec: item?.spec ?? null,
       quantity: order.final_quantity,
       unitPrice: item?.unit_price ?? 0,
     }});

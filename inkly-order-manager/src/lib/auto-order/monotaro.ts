@@ -134,9 +134,39 @@ export class MonotaroAutoOrder extends BaseAutoOrder {
     }
   }
 
-  async addSingleItemToCart(quantity: number): Promise<boolean> {
+  async addSingleItemToCart(quantity: number, spec: string | null): Promise<boolean> {
     if (!this.page) return false;
 
+    // Spec selection: find the row matching the spec text and use its cart button
+    if (spec) {
+      try {
+        const rows = await this.page.$$('tr');
+        for (const row of rows) {
+          const text = await row.textContent();
+          if (text?.includes(spec)) {
+            const qtyInput = await row.$('input[name="p"]')
+              ?? await row.$('input[name="Quantity"]')
+              ?? await row.$('input[name="quantity"]');
+            if (qtyInput) {
+              await qtyInput.fill('');
+              await qtyInput.fill(quantity.toString());
+            }
+            const btn = await row.$('button:has-text("バスケットに入れる")');
+            if (btn) {
+              await btn.click();
+              await this.page.waitForLoadState('domcontentloaded');
+              await this.page.waitForTimeout(3000);
+              return true;
+            }
+          }
+        }
+        console.log(`[MonotaRO] Spec "${spec}" row not found, falling back to first button`);
+      } catch (e) {
+        console.log(`[MonotaRO] Spec selection failed, falling back:`, e);
+      }
+    }
+
+    // Fallback: use first cart button (original logic)
     const cartButtons = await this.page.$$('button:has-text("バスケットに入れる")');
     if (cartButtons.length === 0) {
       await this.takeScreenshot('no_cart_button');

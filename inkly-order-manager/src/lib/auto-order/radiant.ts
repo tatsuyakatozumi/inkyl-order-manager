@@ -116,8 +116,35 @@ export class RadiantAutoOrder extends BaseAutoOrder {
     }
   }
 
-  async addSingleItemToCart(quantity: number): Promise<boolean> {
+  async addSingleItemToCart(quantity: number, spec: string | null): Promise<boolean> {
     if (!this.page) return false;
+
+    // Spec/variant selection (tolerant — does nothing if selector not found)
+    if (spec) {
+      try {
+        const variantBtn = await this.page.$(
+          `button:has-text("${spec}"), label:has-text("${spec}"), a:has-text("${spec}"), [data-value="${spec}"], .swatch-element:has-text("${spec}")`,
+        );
+        if (variantBtn) {
+          await variantBtn.click();
+          await this.page.waitForTimeout(1000);
+        } else {
+          const selects = await this.page.$$('select');
+          for (const sel of selects) {
+            const options = await sel.$$eval('option', (opts, s) =>
+              opts.filter(o => o.textContent?.includes(s as string)).map(o => o.value), spec);
+            if (options.length > 0) {
+              await sel.selectOption(options[0]);
+              await this.page.waitForTimeout(1000);
+              break;
+            }
+          }
+          console.log(`[Radiant] Variant selector not found for spec "${spec}", continuing`);
+        }
+      } catch (e) {
+        console.log(`[Radiant] Variant selection failed for "${spec}", continuing:`, e);
+      }
+    }
 
     // Set quantity if > 1
     if (quantity > 1) {

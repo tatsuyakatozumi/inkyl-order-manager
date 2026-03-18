@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
     const { data: dbItems, error: itemsError } = await supabase
       .from('ord_items')
       .select(
-        'id,name,supplier_id,product_url,supplier_product_code,unit_price,supplier:ord_suppliers!supplier_id(id,name,auto_order_supported,credentials_encrypted)',
+        'id,name,spec,supplier_id,product_url,supplier_product_code,unit_price,supplier:ord_suppliers!supplier_id(id,name,auto_order_supported,credentials_encrypted)',
       )
       .in('id', itemIds)
       .limit(5000);
@@ -122,6 +122,7 @@ export async function POST(request: NextRequest) {
         name: dbItem.name,
         productUrl: dbItem.product_url ?? '',
         supplierProductCode: dbItem.supplier_product_code ?? null,
+        spec: dbItem.spec ?? null,
         quantity: reqItem.quantity,
         unitPrice: reqItem.unitPrice,
       });

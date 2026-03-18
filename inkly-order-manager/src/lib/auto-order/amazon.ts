@@ -148,12 +148,40 @@ export class AmazonAutoOrder extends BaseAutoOrder {
     }
   }
 
-  async addSingleItemToCart(quantity: number): Promise<boolean> {
+  async addSingleItemToCart(quantity: number, spec: string | null): Promise<boolean> {
     if (!this.page) return false;
 
     console.log('[Amazon] addSingleItemToCart: waiting for page load');
     await this.page.waitForTimeout(3000);
     await this.safeWaitForNetworkIdle();
+
+    // Spec/variant selection (tolerant — does nothing if selector not found)
+    if (spec) {
+      try {
+        const variantBtn = await this.page.$(
+          `#variation_size_name li:has-text("${spec}"), #variation_style_name li:has-text("${spec}"), .a-button-text:has-text("${spec}")`,
+        );
+        if (variantBtn) {
+          await variantBtn.click();
+          await this.page.waitForTimeout(2000);
+          await this.safeWaitForNetworkIdle();
+        } else {
+          const dropdowns = await this.page.$$('select[id*="variation"], select[name*="variation"]');
+          for (const dd of dropdowns) {
+            const options = await dd.$$eval('option', (opts, s) =>
+              opts.filter(o => o.textContent?.includes(s as string)).map(o => o.value), spec);
+            if (options.length > 0) {
+              await dd.selectOption(options[0]);
+              await this.page.waitForTimeout(2000);
+              break;
+            }
+          }
+          console.log(`[Amazon] Variant not found for spec "${spec}", continuing`);
+        }
+      } catch (e) {
+        console.log(`[Amazon] Variant selection failed for "${spec}", continuing:`, e);
+      }
+    }
 
     // Set quantity if > 1
     if (quantity > 1) {

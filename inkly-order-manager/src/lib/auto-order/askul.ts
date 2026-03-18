@@ -48,8 +48,26 @@ export class AskulAutoOrder extends BaseAutoOrder {
     }
   }
 
-  async addSingleItemToCart(quantity: number): Promise<boolean> {
+  async addSingleItemToCart(quantity: number, spec: string | null): Promise<boolean> {
     if (!this.page) return false;
+
+    // Spec/variant selection (tolerant — does nothing if selector not found)
+    if (spec) {
+      try {
+        const variantLink = await this.page.$(
+          `a:has-text("${spec}"), button:has-text("${spec}"), label:has-text("${spec}")`,
+        );
+        if (variantLink) {
+          await variantLink.click();
+          await this.page.waitForLoadState('domcontentloaded');
+          await this.page.waitForTimeout(2000);
+        } else {
+          console.log(`[ASKUL] Variant not found for spec "${spec}", continuing`);
+        }
+      } catch (e) {
+        console.log(`[ASKUL] Variant selection failed for "${spec}", continuing:`, e);
+      }
+    }
 
     const qtyInput = await this.page.$('input[name="quantity"], input.quantity, #quantity');
     if (qtyInput) {

@@ -5,6 +5,7 @@ export interface AutoOrderItem {
   name: string;
   productUrl: string;
   supplierProductCode: string | null;
+  spec: string | null;
   quantity: number;
   unitPrice: number;
 }
@@ -91,7 +92,7 @@ export abstract class BaseAutoOrder {
   abstract isLoggedIn(): Promise<boolean>;
   abstract navigateToLoginPage(): Promise<void>;
   abstract login(credentials: { username: string; password: string }): Promise<boolean>;
-  abstract addSingleItemToCart(quantity: number): Promise<boolean>;
+  abstract addSingleItemToCart(quantity: number, spec: string | null): Promise<boolean>;
 
   // ---- Shared logic ----
 
@@ -168,7 +169,7 @@ export abstract class BaseAutoOrder {
         await this.page.goto(item.productUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
         console.log('[AutoOrder] addToCart: adding to cart');
-        const added = await this.addSingleItemToCart(item.quantity);
+        const added = await this.addSingleItemToCart(item.quantity, item.spec);
         const screenshotPath = await this.takeScreenshot(`item_${item.itemId}`);
 
         results.push({
