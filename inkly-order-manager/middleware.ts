@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import crypto from 'crypto';
+
+export const runtime = 'nodejs';
 
 function expectedToken(): string {
-  const crypto = require('crypto');
   const secret = process.env.ENCRYPTION_KEY || 'fallback';
   return crypto.createHmac('sha256', secret).update('admin_session').digest('hex');
 }
