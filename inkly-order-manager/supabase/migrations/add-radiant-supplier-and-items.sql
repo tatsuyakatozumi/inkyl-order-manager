@@ -1,3 +1,6 @@
+-- Add UNIQUE constraint to supplier name (required for ON CONFLICT)
+ALTER TABLE ord_suppliers ADD CONSTRAINT ord_suppliers_name_unique UNIQUE (name);
+
 -- Add Radiant supplier
 INSERT INTO ord_suppliers (name, order_cycle, auto_order_supported, login_url, is_active, notes)
 VALUES (
@@ -28,6 +31,5 @@ BEGIN
     ('Lime Green（ライムグリーン）', 'タトゥー用品', 'インク', v_supplier_id, '1/2 oz', 'bottle', 'consumable', true, 'https://www.radiantcolors.com/products/lime-green?variant=25574294342', true),
     ('Flesh（フレッシュ）', 'タトゥー用品', 'インク', v_supplier_id, '1/2 oz', 'bottle', 'consumable', true, 'https://www.radiantcolors.com/products/flesh?variant=25573803334', true),
     ('Violet（バイオレット）', 'タトゥー用品', 'インク', v_supplier_id, '1/2 oz', 'bottle', 'consumable', true, 'https://www.radiantcolors.com/products/violet?variant=27347261894', true),
-    ('Teal（ティール）', 'タトゥー用品', 'インク', v_supplier_id, '1/2 oz', 'bottle', 'consumable', true, 'https://www.radiantcolors.com/products/teal?variant=29371162508', true)
-  ON CONFLICT DO NOTHING;
+    ('Teal（ティール）', 'タトゥー用品', 'インク', v_supplier_id, '1/2 oz', 'bottle', 'consumable', true, 'https://www.radiantcolors.com/products/teal?variant=29371162508', true);
 END $$;
