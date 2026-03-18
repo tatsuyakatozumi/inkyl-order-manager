@@ -57,7 +57,13 @@ export async function parseOrderRequest(
     throw new Error('Unexpected response format from Anthropic API');
   }
 
-  const parsed: ParsedOrderRequest = JSON.parse(content.text);
+  // Strip markdown code block wrappers if present
+  let jsonText = content.text.trim();
+  if (jsonText.startsWith('```')) {
+    jsonText = jsonText.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+  }
+
+  const parsed: ParsedOrderRequest = JSON.parse(jsonText);
 
   // Filter out low-confidence matches
   const confident = parsed.items.filter((item) => item.confidence >= 0.6);
