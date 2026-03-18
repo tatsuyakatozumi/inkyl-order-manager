@@ -151,15 +151,13 @@ export async function POST(request: NextRequest) {
       }
 
       const autoOrder = getAutoOrderModule(supplier.name);
-      if (!autoOrder || !supplier.credentials_encrypted) {
+      if (!autoOrder) {
         for (const item of group.orderItems) {
           autoOrderResults.push({
             itemId: item.itemId,
             supplierName: supplier.name,
             status: 'failed',
-            errorMessage: !autoOrder
-              ? 'Auto-order module not found'
-              : 'Credentials not configured',
+            errorMessage: 'Auto-order module not found',
             cartUrl: null,
           });
         }
@@ -173,8 +171,11 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        const decrypted = decryptCredentials(supplier.credentials_encrypted);
-        const credentials: { username: string; password: string } = JSON.parse(decrypted);
+        let credentials = { username: '', password: '' };
+        if (supplier.credentials_encrypted) {
+          const decrypted = decryptCredentials(supplier.credentials_encrypted);
+          credentials = JSON.parse(decrypted);
+        }
         const { results, cartUrl, screenshotPath } = await autoOrder.executeOrder(
           credentials,
           group.orderItems,

@@ -119,7 +119,7 @@ export async function processOrderRequest(event: SlackEvent): Promise<void> {
 
       await supabase.from('ord_order_history').insert(historyRecords);
 
-      if (!supplier.auto_order_supported || !supplier.credentials_encrypted) {
+      if (!supplier.auto_order_supported) {
         resultLines.push(`\n*${supplier.name}* (自動発注非対応)`);
         for (const item of orderItems) {
           resultLines.push(`  :clipboard: ${item.name} x${item.quantity}`);
@@ -137,9 +137,11 @@ export async function processOrderRequest(event: SlackEvent): Promise<void> {
       }
 
       try {
-        const decrypted = decryptCredentials(supplier.credentials_encrypted);
-        const credentials: { username: string; password: string } =
-          JSON.parse(decrypted);
+        let credentials = { username: '', password: '' };
+        if (supplier.credentials_encrypted) {
+          const decrypted = decryptCredentials(supplier.credentials_encrypted);
+          credentials = JSON.parse(decrypted);
+        }
 
         const { results, screenshotPath, cartUrl } = await autoOrder.executeOrder(
           credentials,

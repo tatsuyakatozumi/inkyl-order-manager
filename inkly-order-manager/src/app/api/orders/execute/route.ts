@@ -61,15 +61,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!supplier.credentials_encrypted) {
-      return NextResponse.json(
-        { error: 'Supplier credentials not configured' },
-        { status: 400 },
-      );
+    let credentials = { username: '', password: '' };
+    if (supplier.credentials_encrypted) {
+      const decrypted = decryptCredentials(supplier.credentials_encrypted);
+      credentials = JSON.parse(decrypted);
     }
-
-    const decrypted = decryptCredentials(supplier.credentials_encrypted);
-    const credentials: { username: string; password: string } = JSON.parse(decrypted);
 
     const orderItems = monthlyOrders.map((order: any) => {
       const item = normalizeRel(order.item);
