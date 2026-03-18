@@ -12,14 +12,13 @@ export interface AutoOrderItem {
 export interface AutoOrderResult {
   itemId: string;
   success: boolean;
-  status: 'cart_added' | 'ordered' | 'failed';
+  status: 'cart_added' | 'failed';
   errorMessage?: string;
   screenshotPath?: string;
 }
 
 export interface ExecuteOrderResult {
   results: AutoOrderResult[];
-  checkoutSuccess: boolean;
   cartUrl: string | null;
   screenshotPath?: string;
 }
@@ -93,7 +92,6 @@ export abstract class BaseAutoOrder {
   abstract navigateToLoginPage(): Promise<void>;
   abstract login(credentials: { username: string; password: string }): Promise<boolean>;
   abstract addSingleItemToCart(quantity: number): Promise<boolean>;
-  abstract checkout(): Promise<boolean>;
 
   // ---- Shared logic ----
 
@@ -206,33 +204,25 @@ export abstract class BaseAutoOrder {
   async executeOrder(
     credentials: { username: string; password: string },
     items: AutoOrderItem[],
-    autoConfirm: boolean = false,
   ): Promise<ExecuteOrderResult> {
     try {
       await this.initialize();
       this.credentials = credentials;
-      await this.ensureLoggedIn(credentials);
-      const { results, cartUrl } = await this.addToCart(items);
 
-      let checkoutSuccess = false;
-      if (autoConfirm) {
-        console.log('[AutoOrder] executeOrder: autoConfirm=true, proceeding to checkout');
-        try {
-          checkoutSuccess = await this.checkout();
-          console.log('[AutoOrder] executeOrder: checkout result:', checkoutSuccess);
-          if (checkoutSuccess) {
-            for (const r of results) {
-              if (r.status === 'cart_added') r.status = 'ordered';
-            }
-          }
-        } catch (e) {
-          console.error('[AutoOrder] executeOrder: checkout error:', e);
+      // ログイン試行 — 失敗しても続行
+      try {
+        const loginOk = await this.ensureLoggedIn(credentials);
+        if (!loginOk) {
+          console.warn(`[AutoOrder] ${this.supplierName}: login failed, continuing without login`);
         }
+      } catch (e) {
+        console.warn(`[AutoOrder] ${this.supplierName}: login error, continuing without login:`, e);
       }
 
+      const { results, cartUrl } = await this.addToCart(items);
       const screenshotPath = await this.takeScreenshot('final_cart');
 
-      return { results, checkoutSuccess, cartUrl, screenshotPath };
+      return { results, cartUrl, screenshotPath };
     } finally {
       await this.cleanup();
     }

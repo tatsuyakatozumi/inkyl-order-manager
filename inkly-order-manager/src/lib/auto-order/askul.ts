@@ -66,27 +66,4 @@ export class AskulAutoOrder extends BaseAutoOrder {
     return true;
   }
 
-  async checkout(): Promise<boolean> {
-    if (!this.page) return false;
-    try {
-      await this.page.goto(this.getCartUrl(), { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await this.takeScreenshot('checkout_cart');
-
-      await this.page.click('button:has-text("注文手続きへ"), a:has-text("レジに進む"), .btn-checkout');
-      await this.page.waitForLoadState('domcontentloaded');
-      await this.page.waitForTimeout(3000);
-      await this.takeScreenshot('checkout_confirm');
-
-      await this.page.click('button:has-text("注文を確定する"), button:has-text("注文する"), .btn-order-confirm');
-      await this.page.waitForLoadState('domcontentloaded');
-      await this.page.waitForTimeout(3000);
-      await this.takeScreenshot('checkout_complete');
-
-      const orderComplete = await this.page.$('.order-complete, .order-thanks, :has-text("ご注文ありがとうございます")');
-      return orderComplete !== null;
-    } catch {
-      await this.takeScreenshot('checkout_error');
-      return false;
-    }
-  }
 }

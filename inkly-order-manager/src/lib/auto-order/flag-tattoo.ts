@@ -28,27 +28,65 @@ export class FlagTattooAutoOrder extends BaseAutoOrder {
       await loginLink.click();
       await this.page.waitForLoadState('domcontentloaded');
     } else {
-      await this.page.goto(`${FLAG_TATTOO_BASE_URL}/login`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await this.page.goto(`${FLAG_TATTOO_BASE_URL}/account/login`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30000,
+      });
     }
   }
 
   async login(credentials: { username: string; password: string }): Promise<boolean> {
     if (!this.page) return false;
     try {
-      await this.page.fill(
-        'input[name="email"], input[name="loginId"], input[type="email"]',
-        credentials.username,
-      );
-      await this.page.fill(
-        'input[name="password"], input[type="password"]',
-        credentials.password,
-      );
-      await this.page.click('button[type="submit"], input[type="submit"]');
-      await this.page.waitForLoadState('domcontentloaded');
-      await this.page.waitForTimeout(3000);
+      // 1. 「Shopで続行する」ボタンをクリック（ポップアップを待機しながら）
+      console.log('[FlagTattoo] Clicking "shopで続行する" button');
+      const [popup] = await Promise.all([
+        this.page.waitForEvent('popup', { timeout: 10000 }),
+        this.page.click(
+          'button:has-text("shopで続行する"), button:has-text("Shop Pay"), button:has-text("Shop"), a:has-text("shopで続行")',
+        ),
+      ]);
 
-      return await this.isLoggedIn();
-    } catch {
+      await popup.waitForLoadState('domcontentloaded');
+      console.log('[FlagTattoo] Popup opened:', popup.url());
+
+      // 2. メールアドレスが表示されているか確認
+      await popup.waitForTimeout(2000);
+      const emailVisible = await popup.$(`text=${credentials.username}`);
+
+      if (emailVisible) {
+        console.log('[FlagTattoo] Email found in popup, clicking "続行する"');
+        // 3. 「続行する」ボタンをクリック
+        await popup.click('button:has-text("続行する"), button:has-text("Continue")');
+        await popup.waitForTimeout(3000);
+
+        // 4. 認証コード入力画面が出たらログイン断念
+        const codeInput = await popup.$(
+          'input[name="code"], input[autocomplete="one-time-code"], input[inputmode="numeric"]',
+        );
+        if (codeInput) {
+          console.log('[FlagTattoo] Auth code requested, skipping login');
+          await this.takeScreenshot('login_auth_code_required');
+          await popup.close().catch(() => {});
+          return false;
+        }
+      } else {
+        // メールアドレスが見つからない → ログイン断念
+        console.log('[FlagTattoo] Email not found in popup, skipping login');
+        await this.takeScreenshot('login_email_not_found');
+        await popup.close().catch(() => {});
+        return false;
+      }
+
+      // 5. ポップアップが閉じるのを待つ
+      await popup.waitForEvent('close', { timeout: 10000 }).catch(() => {});
+      await this.page.waitForTimeout(2000);
+
+      const loggedIn = await this.isLoggedIn();
+      console.log('[FlagTattoo] Login result:', loggedIn);
+      return loggedIn;
+    } catch (e) {
+      console.warn('[FlagTattoo] Shopify login error:', e);
       await this.takeScreenshot('login_error');
       return false;
     }
@@ -58,7 +96,9 @@ export class FlagTattooAutoOrder extends BaseAutoOrder {
     if (!this.page) return false;
 
     if (quantity > 1) {
-      const qtyInput = await this.page.$('input[name="quantity"], input.quantity-input, #quantity');
+      const qtyInput = await this.page.$(
+        'input[name="quantity"], input.quantity-input, #quantity',
+      );
       if (qtyInput) {
         await qtyInput.fill('');
         await qtyInput.fill(quantity.toString());
@@ -69,41 +109,12 @@ export class FlagTattooAutoOrder extends BaseAutoOrder {
       'button:has-text("カートに入れる"), button:has-text("Add to Cart"), .add-to-cart-button, input[type="submit"][value*="カート"]',
     );
 
-    await this.page.waitForSelector(
-      '.cart-notification, .success-message, .cart-count-update',
-      { timeout: 10000 },
-    ).catch(() => null);
+    await this.page
+      .waitForSelector('.cart-notification, .success-message, .cart-count-update', {
+        timeout: 10000,
+      })
+      .catch(() => null);
 
     return true;
-  }
-
-  async checkout(): Promise<boolean> {
-    if (!this.page) return false;
-    try {
-      await this.page.goto(this.getCartUrl(), { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await this.takeScreenshot('checkout_cart');
-
-      await this.page.click(
-        'button:has-text("レジに進む"), button:has-text("Checkout"), a:has-text("購入手続き"), .checkout-button',
-      );
-      await this.page.waitForLoadState('domcontentloaded');
-      await this.page.waitForTimeout(3000);
-      await this.takeScreenshot('checkout_confirm');
-
-      await this.page.click(
-        'button:has-text("注文を確定する"), button:has-text("Place Order"), button:has-text("注文する"), .btn-order-confirm',
-      );
-      await this.page.waitForLoadState('domcontentloaded');
-      await this.page.waitForTimeout(3000);
-      await this.takeScreenshot('checkout_complete');
-
-      const orderComplete = await this.page.$(
-        '.order-complete, .order-confirmation, :has-text("ご注文ありがとうございます"), :has-text("Thank you for your order")',
-      );
-      return orderComplete !== null;
-    } catch {
-      await this.takeScreenshot('checkout_error');
-      return false;
-    }
   }
 }

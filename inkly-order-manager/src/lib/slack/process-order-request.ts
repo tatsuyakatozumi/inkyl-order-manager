@@ -139,11 +139,9 @@ export async function processOrderRequest(event: SlackEvent): Promise<void> {
         const credentials: { username: string; password: string } =
           JSON.parse(decrypted);
 
-        // Always cart-only (autoConfirm=false)
         const { results, screenshotPath, cartUrl } = await autoOrder.executeOrder(
           credentials,
           orderItems,
-          false,
         );
 
         let screenshotUrl: string | null = null;
@@ -156,7 +154,7 @@ export async function processOrderRequest(event: SlackEvent): Promise<void> {
 
         // Update order history status
         const successItems = results.filter(
-          (r) => r.status === 'cart_added' || r.status === 'ordered',
+          (r) => r.status === 'cart_added',
         );
         const failedItems = results.filter((r) => r.status === 'failed');
 
@@ -187,7 +185,7 @@ export async function processOrderRequest(event: SlackEvent): Promise<void> {
         for (const item of orderItems) {
           const result = results.find((r) => r.itemId === item.itemId);
           const icon =
-            result?.status === 'cart_added' || result?.status === 'ordered'
+            result?.status === 'cart_added'
               ? ':shopping_trolley:'
               : ':warning:';
           resultLines.push(`  ${icon} ${item.name} x${item.quantity}`);

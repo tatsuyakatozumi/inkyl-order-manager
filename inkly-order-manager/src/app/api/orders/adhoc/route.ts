@@ -177,7 +177,6 @@ export async function POST(request: NextRequest) {
         const { results, cartUrl, screenshotPath } = await autoOrder.executeOrder(
           credentials,
           group.orderItems,
-          false,
         );
 
         let screenshotUrl: string | null = null;
