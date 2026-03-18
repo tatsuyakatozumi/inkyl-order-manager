@@ -7,6 +7,43 @@ export class FlagTattooAutoOrder extends BaseAutoOrder {
     super('FLAG Tattoo Supply');
   }
 
+  /**
+   * Override: use headed Chromium to bypass Shopify/Cloudflare bot detection.
+   * Requires Xvfb in Docker (see docker-entrypoint.sh).
+   */
+  async initialize(): Promise<void> {
+    const { chromium } = await import('playwright');
+    this.browser = await chromium.launch({
+      headless: false,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-http2',
+        '--disable-blink-features=AutomationControlled',
+      ],
+    });
+    this.page = await this.browser.newPage({
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      viewport: { width: 1280, height: 800 },
+      ignoreHTTPSErrors: true,
+    });
+
+    await this.page.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    });
+    await this.page.addInitScript(() => {
+      Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    });
+    await this.page.addInitScript(() => {
+      Object.defineProperty(navigator, 'languages', { get: () => ['ja-JP', 'ja', 'en-US', 'en'] });
+    });
+
+    this.loggedIn = false;
+  }
+
   getTopPageUrl(): string {
     return `${FLAG_TATTOO_BASE_URL}/`;
   }
