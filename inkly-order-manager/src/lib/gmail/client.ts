@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 
-const SHOPIFY_SENDER = 'no-reply@accounts.shopify.com';
+// Flag Tattoo (Shopify) の認証コードメール送信元
+const SHOPIFY_SENDER = 't.shopifyemail.com';
 
 interface GmailClientOptions {
   refreshToken: string;
@@ -9,8 +10,13 @@ interface GmailClientOptions {
 /**
  * Fetch the latest Shopify verification code from Gmail.
  *
- * Searches for emails from Shopify's no-reply address received after
- * `afterTimestamp`, polls up to `maxWaitMs` with `intervalMs` spacing.
+ * Actual email format (Flag Tattoo Supply):
+ *   From: FLAG Tattoo Supply <store+94042194216@t.shopifyemail.com>
+ *   Subject: 225102はあなたのコードです
+ *   Body: 認証コード：2 2 5 1 0 2
+ *
+ * Polls Gmail API up to `maxWaitMs` with `intervalMs` spacing,
+ * only looking at emails received after `afterTimestamp`.
  */
 export async function fetchShopifyVerificationCode(
   options: GmailClientOptions,
@@ -69,12 +75,14 @@ export async function fetchShopifyVerificationCode(
   const gmail = google.gmail({ version: 'v1', auth: oauth2 });
 
   const afterEpoch = Math.floor(afterTimestamp.getTime() / 1000);
-  const query = `from:${SHOPIFY_SENDER} after:${afterEpoch}`;
+  // Search by sender domain and subject pattern
+  const query = `from:${SHOPIFY_SENDER} subject:はあなたのコードです after:${afterEpoch}`;
 
   const deadline = Date.now() + maxWaitMs;
 
   while (Date.now() < deadline) {
     try {
+      console.log('[Gmail] Polling for verification code email...');
       const listRes = await gmail.users.messages.list({
         userId: 'me',
         q: query,
@@ -109,27 +117,49 @@ export async function fetchShopifyVerificationCode(
 }
 
 /**
- * Extract a numeric verification code from a Gmail message.
- * Shopify sends codes as 6-digit numbers in the email body.
+ * Extract a 6-digit verification code from a Shopify email.
+ *
+ * Extraction priority:
+ *   1. Subject line: "225102はあなたのコードです" → 225102
+ *   2. Body: spaced digits "2 2 5 1 0 2" → 225102
+ *   3. Snippet fallback
  */
 function extractCodeFromMessage(message: any): string | null {
-  const parts = message.payload?.parts ?? [message.payload];
+  // 1. Subject line — most reliable (e.g. "225102はあなたのコードです")
+  const headers = message.payload?.headers ?? [];
+  const subjectHeader = headers.find(
+    (h: any) => h.name.toLowerCase() === 'subject',
+  );
+  if (subjectHeader?.value) {
+    const subjectMatch = subjectHeader.value.match(/^(\d{6})/);
+    if (subjectMatch) {
+      return subjectMatch[1];
+    }
+  }
 
+  // 2. Body — code appears with spaces: "2 2 5 1 0 2"
+  const parts = message.payload?.parts ?? [message.payload];
   for (const part of parts) {
     if (!part?.body?.data) continue;
 
     const body = Buffer.from(part.body.data, 'base64url').toString('utf-8');
 
-    // Look for a standalone 6-digit code
-    const match = body.match(/\b(\d{6})\b/);
-    if (match) {
-      return match[1];
+    // Spaced 6-digit code: "2 2 5 1 0 2"
+    const spacedMatch = body.match(/(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)/);
+    if (spacedMatch) {
+      return spacedMatch.slice(1, 7).join('');
+    }
+
+    // Contiguous 6-digit code (fallback)
+    const solidMatch = body.match(/\b(\d{6})\b/);
+    if (solidMatch) {
+      return solidMatch[1];
     }
   }
 
-  // Also check the snippet (plain text summary)
+  // 3. Snippet fallback
   if (message.snippet) {
-    const match = message.snippet.match(/\b(\d{6})\b/);
+    const match = message.snippet.match(/(\d{6})/);
     if (match) {
       return match[1];
     }
