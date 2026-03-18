@@ -1,6 +1,5 @@
 ﻿'use client';
 
-import Link from 'next/link';
 import { useMemo, useState, useTransition } from 'react';
 import { Ban, Edit, ExternalLink, Plus, Search } from 'lucide-react';
 import type { Item } from '@/types/database';
@@ -23,9 +22,6 @@ interface ItemsTableProps {
   categoryLargeOptions: string[];
   categoryMediumOptions: string[];
   categorySmallOptions: string[];
-  page: number;
-  totalCount: number;
-  pageSize: number;
 }
 
 export default function ItemsTable({
@@ -34,9 +30,6 @@ export default function ItemsTable({
   categoryLargeOptions,
   categoryMediumOptions,
   categorySmallOptions,
-  page,
-  totalCount,
-  pageSize,
 }: ItemsTableProps) {
   const [consumableFilter, setConsumableFilter] =
     useState<'all' | 'consumable' | 'non_consumable'>('all');
@@ -73,9 +66,6 @@ export default function ItemsTable({
 
     return result;
   }, [items, consumableFilter, categoryFilter, categoryMediumFilter, categorySmallFilter, supplierFilter, searchText]);
-
-  const hasPrevPage = page > 1;
-  const hasNextPage = page * pageSize < totalCount;
 
   function handleAutoOrderToggle(itemId: string, current: boolean) {
     startTransition(async () => {
@@ -191,7 +181,7 @@ export default function ItemsTable({
       </div>
 
       <p className="text-sm text-gray-500">
-        Showing {filtered.length} items on this page (total {totalCount.toLocaleString()})
+        {filtered.length} / {items.length} items
       </p>
 
       <div className="space-y-3 md:hidden">
@@ -343,30 +333,6 @@ export default function ItemsTable({
             ))}
           </tbody>
         </table>
-      </div>
-
-      <div className="flex items-center justify-between rounded-lg border bg-white p-3">
-        <Link
-          href={`/admin/items?page=${Math.max(1, page - 1)}`}
-          prefetch={false}
-          className={`rounded border px-3 py-2 text-sm ${
-            hasPrevPage ? 'border-gray-300 text-gray-700 hover:bg-gray-50' : 'pointer-events-none border-gray-200 text-gray-300'
-          }`}
-        >
-          Previous
-        </Link>
-        <span className="text-sm text-gray-600">
-          Page {page} / {Math.max(1, Math.ceil(totalCount / pageSize))}
-        </span>
-        <Link
-          href={`/admin/items?page=${page + 1}`}
-          prefetch={false}
-          className={`rounded border px-3 py-2 text-sm ${
-            hasNextPage ? 'border-gray-300 text-gray-700 hover:bg-gray-50' : 'pointer-events-none border-gray-200 text-gray-300'
-          }`}
-        >
-          Next
-        </Link>
       </div>
 
       {editItem !== null && (
