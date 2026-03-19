@@ -203,6 +203,9 @@ export abstract class BaseAutoOrder {
     return { results, cartUrl };
   }
 
+  /** サブクラスでtrueにするとログイン失敗時にカート投入せずエラーを返す */
+  protected loginRequired: boolean = false;
+
   async executeOrder(
     credentials: { username: string; password: string; gmail_refresh_token?: string },
     items: AutoOrderItem[],
@@ -211,14 +214,30 @@ export abstract class BaseAutoOrder {
       await this.initialize();
       this.credentials = credentials;
 
-      // ログイン試行 — 失敗しても続行
+      // ログイン試行
+      let loginOk = false;
       try {
-        const loginOk = await this.ensureLoggedIn(credentials);
+        loginOk = await this.ensureLoggedIn(credentials);
         if (!loginOk) {
-          console.warn(`[AutoOrder] ${this.supplierName}: login failed, continuing without login`);
+          console.warn(`[AutoOrder] ${this.supplierName}: login failed`);
         }
       } catch (e) {
-        console.warn(`[AutoOrder] ${this.supplierName}: login error, continuing without login:`, e);
+        console.warn(`[AutoOrder] ${this.supplierName}: login error:`, e);
+      }
+
+      // ログイン必須サプライヤーでログイン失敗 → 全アイテム失敗で返す
+      if (this.loginRequired && !loginOk) {
+        const screenshotPath = await this.takeScreenshot('login_failed');
+        return {
+          results: items.map(item => ({
+            itemId: item.itemId,
+            success: false,
+            status: 'failed' as const,
+            errorMessage: 'ログインに失敗しました。認証情報を確認してください。',
+          })),
+          cartUrl: null,
+          screenshotPath,
+        };
       }
 
       const { results, cartUrl } = await this.addToCart(items);

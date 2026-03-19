@@ -4,6 +4,8 @@ import { fetchShopifyVerificationCode } from '../gmail/client';
 const FLAG_TATTOO_BASE_URL = 'https://flag-ts.com';
 
 export class FlagTattooAutoOrder extends BaseAutoOrder {
+  protected loginRequired = true;
+
   constructor() {
     super('FLAG Tattoo Supply');
   }
@@ -72,17 +74,15 @@ export class FlagTattooAutoOrder extends BaseAutoOrder {
     if (!this.page) return false;
 
     const email = credentials.username;
-    const refreshToken = credentials.gmail_refresh_token;
+    const refreshToken = credentials.gmail_refresh_token ?? '';
 
     if (!email) {
       console.warn('[FlagTattoo] No email address configured, skipping login');
       return false;
     }
 
-    if (!refreshToken) {
-      console.warn('[FlagTattoo] No Gmail refresh token configured, cannot complete email verification');
-      return false;
-    }
+    // refreshToken が空でも GMAIL_TOKEN_JSON 環境変数にフォールバックするので
+    // ここではブロックしない（gmail/client.ts 側で処理）
 
     try {
       // Record timestamp before requesting code so we only fetch newer emails
