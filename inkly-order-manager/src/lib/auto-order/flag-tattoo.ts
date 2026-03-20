@@ -57,8 +57,12 @@ export class FlagTattooAutoOrder extends BaseAutoOrder {
 
   async isLoggedIn(): Promise<boolean> {
     if (!this.page) return false;
-    const el = await this.page.$('.account-menu, .logout-link, .user-name, a[href*="logout"], a[href*="account"]');
-    return el !== null;
+    // a[href*="account"] はログイン前でもヘッダーに存在するので使わない
+    // ログアウトリンクやアカウント名表示で判定する
+    const el = await this.page.$('a[href*="logout"], .logout-link, .user-name, .account-menu__logged-in');
+    const result = el !== null;
+    console.log('[FlagTattoo] isLoggedIn check:', result);
+    return result;
   }
 
   async navigateToLoginPage(): Promise<void> {
