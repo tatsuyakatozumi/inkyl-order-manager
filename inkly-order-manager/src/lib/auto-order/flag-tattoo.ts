@@ -1,10 +1,10 @@
-import { BaseAutoOrder } from './base';
-import { fetchShopifyVerificationCode } from '../gmail/client';
+import { BaseAutoOrder, AutoOrderItem, AutoOrderResult } from './base';
 
 const FLAG_TATTOO_BASE_URL = 'https://flag-ts.com';
 
 export class FlagTattooAutoOrder extends BaseAutoOrder {
-  protected loginRequired = true;
+  // パーマリンク方式ではログイン不要
+  protected loginRequired = false;
 
   constructor() {
     super('FLAG Tattoo Supply');
@@ -56,210 +56,208 @@ export class FlagTattooAutoOrder extends BaseAutoOrder {
   }
 
   async isLoggedIn(): Promise<boolean> {
-    if (!this.page) return false;
-    // a[href*="account"] はログイン前でもヘッダーに存在するので使わない
-    // ログアウトリンクやアカウント名表示で判定する
-    const el = await this.page.$('a[href*="logout"], .logout-link, .user-name, .account-menu__logged-in');
-    const result = el !== null;
-    console.log('[FlagTattoo] isLoggedIn check:', result);
-    return result;
+    return false; // パーマリンク方式ではログイン不要
   }
 
   async navigateToLoginPage(): Promise<void> {
-    if (!this.page) return;
-    // Shopify redirects /account/login to shopify.com/…/account
-    await this.page.goto(`${FLAG_TATTOO_BASE_URL}/account/login`, {
-      waitUntil: 'domcontentloaded',
-      timeout: 30000,
-    });
+    // パーマリンク方式ではログイン不要
   }
 
-  async login(credentials: { username: string; password: string; gmail_refresh_token?: string }): Promise<boolean> {
-    if (!this.page) return false;
+  async login(): Promise<boolean> {
+    // パーマリンク方式ではログイン不要
+    return true;
+  }
 
-    const email = credentials.username;
-    const refreshToken = credentials.gmail_refresh_token ?? '';
-
-    if (!email) {
-      console.warn('[FlagTattoo] No email address configured, skipping login');
-      return false;
+  /**
+   * カートパーマリンク方式: 商品ページから variant ID を抽出し、
+   * /cart/VID1:QTY1,VID2:QTY2 のパーマリンクを生成する。
+   *
+   * Shopify はカートをブラウザセッションに保存するため、
+   * Playwright でカートに入れてもユーザーのブラウザには反映されない。
+   * パーマリンクならユーザーがリンクを開くだけでカートに入る。
+   */
+  async addToCart(items: AutoOrderItem[]): Promise<{ results: AutoOrderResult[]; cartUrl: string | null }> {
+    if (!this.page) {
+      return {
+        results: items.map(item => ({
+          itemId: item.itemId,
+          success: false,
+          status: 'failed' as const,
+          errorMessage: 'Browser not initialized',
+        })),
+        cartUrl: null,
+      };
     }
 
-    // refreshToken が空でも GMAIL_TOKEN_JSON 環境変数にフォールバックするので
-    // ここではブロックしない（gmail/client.ts 側で処理）
+    const results: AutoOrderResult[] = [];
+    const cartParts: string[] = []; // "VARIANT_ID:QUANTITY" の配列
+
+    for (const item of items) {
+      try {
+        console.log(`[FlagTattoo] Processing: ${item.name} (${item.productUrl})`);
+        await this.page.goto(item.productUrl, {
+          waitUntil: 'domcontentloaded',
+          timeout: 30000,
+        });
+        await this.page.waitForTimeout(2000);
+
+        // バリアント選択
+        await this.selectVariant(item.spec);
+
+        // variant ID 抽出
+        const variantId = await this.extractVariantId(item);
+        if (variantId) {
+          cartParts.push(`${variantId}:${item.quantity}`);
+          console.log(`[FlagTattoo] variant ID found: ${variantId} (qty: ${item.quantity})`);
+          results.push({
+            itemId: item.itemId,
+            success: true,
+            status: 'cart_added',
+          });
+        } else {
+          console.warn(`[FlagTattoo] variant ID not found for: ${item.name}`);
+          results.push({
+            itemId: item.itemId,
+            success: false,
+            status: 'failed',
+            errorMessage: 'variant ID を取得できませんでした',
+          });
+        }
+
+        await this.takeScreenshot(`item_${item.itemId}`);
+      } catch (e: any) {
+        console.error(`[FlagTattoo] Error processing ${item.name}:`, e);
+        results.push({
+          itemId: item.itemId,
+          success: false,
+          status: 'failed',
+          errorMessage: e.message,
+        });
+        await this.takeScreenshot(`item_${item.itemId}_error`);
+      }
+    }
+
+    // カートパーマリンクを生成
+    const cartUrl = cartParts.length > 0
+      ? `${FLAG_TATTOO_BASE_URL}/cart/${cartParts.join(',')}`
+      : null;
+
+    console.log(`[FlagTattoo] Cart permalink: ${cartUrl}`);
+
+    return { results, cartUrl };
+  }
+
+  /**
+   * バリアント選択（既存ロジック）
+   */
+  private async selectVariant(spec: string | null): Promise<void> {
+    if (!this.page || !spec) return;
 
     try {
-      // Record timestamp before requesting code so we only fetch newer emails
-      const beforeCodeRequest = new Date();
-
-      console.log('[FlagTattoo] Starting Shopify email verification login');
-      console.log('[FlagTattoo] Current URL:', this.page.url());
-      await this.takeScreenshot('login_page');
-
-      // Step 1: メール入力欄を探す
-      // placeholder "メールを送信する" の input を探す
-      const emailInput = await this.page.waitForSelector(
-        'input[placeholder*="メール"], input[type="email"], input[name="email"], input[autocomplete="email"]',
-        { timeout: 15000 },
+      const variantBtn = await this.page.$(
+        `button:has-text("${spec}"), label:has-text("${spec}"), a:has-text("${spec}"), [data-value="${spec}"], .swatch-element:has-text("${spec}")`,
       );
-      if (!emailInput) {
-        console.warn('[FlagTattoo] Email input not found on login page');
-        await this.takeScreenshot('login_no_email_input');
-        return false;
+      if (variantBtn) {
+        await variantBtn.click();
+        await this.page.waitForTimeout(1000);
+        console.log(`[FlagTattoo] Variant selected: "${spec}"`);
+        return;
       }
 
-      await emailInput.fill(email);
-      console.log('[FlagTattoo] Email entered');
-      await this.takeScreenshot('login_email_entered');
-
-      // Step 2: "続行" ボタンをクリック
-      // 注意: "shop で続行する" ボタンもあるので、正確にマッチさせる
-      // テキストが完全一致する "続行" ボタンを優先（Shop Pay の "shop で続行する" を避ける）
-      let submitButton = await this.page.$('button:text-is("続行")');
-      if (!submitButton) {
-        // フォールバック: submit ボタンまたは "Continue" 等
-        submitButton = await this.page.$(
-          'button[type="submit"]:not(:has-text("shop")), button:text-is("Continue")',
+      // select ドロップダウンから選択
+      const selects = await this.page.$$('select');
+      for (const sel of selects) {
+        const options = await sel.$$eval(
+          'option',
+          (opts, s) => opts.filter(o => o.textContent?.includes(s as string)).map(o => o.value),
+          spec,
         );
-      }
-      if (submitButton) {
-        await submitButton.click();
-        console.log('[FlagTattoo] "続行" button clicked');
-      } else {
-        await emailInput.press('Enter');
-        console.log('[FlagTattoo] Pressed Enter to submit email');
-      }
-
-      // ページ遷移を待つ
-      await this.page.waitForTimeout(3000);
-      console.log('[FlagTattoo] After submit, URL:', this.page.url());
-      await this.takeScreenshot('login_after_email_submit');
-
-      // Step 3: 認証コード入力欄が表示されるのを待つ
-      const codeInput = await this.page.waitForSelector(
-        'input[autocomplete="one-time-code"], input[name="code"], input[inputmode="numeric"], input[type="number"], input[placeholder*="コード"], input[placeholder*="code"], input[data-action*="verify"]',
-        { timeout: 20000 },
-      ).catch(() => null);
-
-      if (!codeInput) {
-        console.warn('[FlagTattoo] Verification code input not found');
-        await this.takeScreenshot('login_no_code_input');
-        return false;
+        if (options.length > 0) {
+          await sel.selectOption(options[0]);
+          await this.page.waitForTimeout(1000);
+          console.log(`[FlagTattoo] Variant selected via dropdown: "${spec}"`);
+          return;
+        }
       }
 
-      await this.takeScreenshot('login_code_input_visible');
-      console.log('[FlagTattoo] Verification code input appeared');
-
-      // Step 4: Gmail から認証コードを取得
-      console.log('[FlagTattoo] Fetching verification code from Gmail...');
-      const code = await fetchShopifyVerificationCode(
-        { refreshToken },
-        beforeCodeRequest,
-        90_000, // 90秒待機
-        5_000,  // 5秒間隔でポーリング
-      );
-
-      if (!code) {
-        console.warn('[FlagTattoo] Failed to retrieve verification code from Gmail');
-        await this.takeScreenshot('login_code_not_found');
-        return false;
-      }
-
-      console.log('[FlagTattoo] Verification code retrieved, entering code');
-
-      // Step 5: 認証コードを入力
-      // 個別の入力欄（6つ）の場合もあるので、まず1つの入力欄に fill を試みる
-      await codeInput.fill(code);
-      await this.page.waitForTimeout(500);
-      await this.takeScreenshot('login_code_entered');
-
-      // Step 6: 送信ボタンをクリック
-      // "ログイン", "認証する", "確認", "送信" 等の日本語ボタンを探す
-      const verifyButton = await this.page.$(
-        'button[type="submit"], button:has-text("ログイン"), button:has-text("認証"), button:has-text("確認"), button:has-text("送信"), button:has-text("Verify"), button:has-text("Submit")',
-      );
-      if (verifyButton) {
-        await verifyButton.click();
-        console.log('[FlagTattoo] Verify button clicked');
-      } else {
-        await codeInput.press('Enter');
-        console.log('[FlagTattoo] Pressed Enter to submit code');
-      }
-
-      // Step 7: ログイン完了を待つ
-      console.log('[FlagTattoo] Code submitted, waiting for login to complete...');
-      await this.page.waitForTimeout(5000);
-      console.log('[FlagTattoo] After code submit, URL:', this.page.url());
-      await this.takeScreenshot('login_after_code_submit');
-
-      // ストアのトップページに戻ってログイン状態を確認
-      await this.page.goto(this.getTopPageUrl(), {
-        waitUntil: 'domcontentloaded',
-        timeout: 30000,
-      });
-      await this.page.waitForTimeout(2000);
-
-      const loggedIn = await this.isLoggedIn();
-      console.log('[FlagTattoo] Login result:', loggedIn);
-      await this.takeScreenshot('login_final');
-      return loggedIn;
+      console.log(`[FlagTattoo] Variant selector not found for spec "${spec}", continuing`);
     } catch (e) {
-      console.warn('[FlagTattoo] Login error:', e);
-      await this.takeScreenshot('login_error');
-      return false;
+      console.log(`[FlagTattoo] Variant selection failed for "${spec}", continuing:`, e);
     }
   }
 
-  async addSingleItemToCart(quantity: number, spec: string | null): Promise<boolean> {
-    if (!this.page) return false;
+  /**
+   * 商品ページから Shopify variant ID を抽出する。
+   *
+   * 優先順:
+   * 1. hidden input[name="id"] (Shopify テーマ標準の add-to-cart フォーム)
+   * 2. URL の ?variant= パラメータ
+   * 3. product.json からスペックをマッチして取得
+   */
+  private async extractVariantId(item: AutoOrderItem): Promise<string | null> {
+    if (!this.page) return null;
 
-    // Spec/variant selection (tolerant — does nothing if selector not found)
-    if (spec) {
-      try {
-        const variantBtn = await this.page.$(
-          `button:has-text("${spec}"), label:has-text("${spec}"), a:has-text("${spec}"), [data-value="${spec}"], .swatch-element:has-text("${spec}")`,
-        );
-        if (variantBtn) {
-          await variantBtn.click();
-          await this.page.waitForTimeout(1000);
-        } else {
-          const selects = await this.page.$$('select');
-          for (const sel of selects) {
-            const options = await sel.$$eval('option', (opts, s) =>
-              opts.filter(o => o.textContent?.includes(s as string)).map(o => o.value), spec);
-            if (options.length > 0) {
-              await sel.selectOption(options[0]);
-              await this.page.waitForTimeout(1000);
-              break;
-            }
+    // 1. hidden input[name="id"] — 最も信頼できる方法
+    const fromInput = await this.page.$eval(
+      'input[name="id"], select[name="id"]',
+      (el) => (el as HTMLInputElement | HTMLSelectElement).value,
+    ).catch(() => null);
+    if (fromInput) {
+      console.log(`[FlagTattoo] variant ID from input[name="id"]: ${fromInput}`);
+      return fromInput;
+    }
+
+    // 2. URL の ?variant= パラメータ
+    try {
+      const currentUrl = new URL(this.page.url());
+      const fromUrl = currentUrl.searchParams.get('variant');
+      if (fromUrl) {
+        console.log(`[FlagTattoo] variant ID from URL parameter: ${fromUrl}`);
+        return fromUrl;
+      }
+    } catch { /* URL parse error — continue */ }
+
+    // 3. product.json からフォールバック
+    try {
+      const productUrl = item.productUrl.replace(/\/$/, '');
+      const jsonUrl = `${productUrl}.json`;
+      console.log(`[FlagTattoo] Fetching ${jsonUrl} for variant ID`);
+
+      const productData = await this.page.evaluate(async (url) => {
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        return res.json();
+      }, jsonUrl);
+
+      if (productData?.product?.variants) {
+        const variants = productData.product.variants;
+
+        // spec がある場合、タイトルでマッチ
+        if (item.spec) {
+          const matched = variants.find((v: any) =>
+            v.title?.includes(item.spec) || item.spec?.includes(v.title),
+          );
+          if (matched) {
+            console.log(`[FlagTattoo] variant ID from JSON (spec match "${item.spec}"): ${matched.id}`);
+            return String(matched.id);
           }
-          console.log(`[FlagTattoo] Variant selector not found for spec "${spec}", continuing`);
         }
-      } catch (e) {
-        console.log(`[FlagTattoo] Variant selection failed for "${spec}", continuing:`, e);
+
+        // マッチしない場合、最初のバリアント
+        if (variants.length > 0) {
+          console.log(`[FlagTattoo] variant ID from JSON (first variant): ${variants[0].id}`);
+          return String(variants[0].id);
+        }
       }
+    } catch (e) {
+      console.warn(`[FlagTattoo] Failed to fetch product JSON:`, e);
     }
 
-    if (quantity > 1) {
-      const qtyInput = await this.page.$(
-        'input[name="quantity"], input.quantity-input, #quantity',
-      );
-      if (qtyInput) {
-        await qtyInput.fill('');
-        await qtyInput.fill(quantity.toString());
-      }
-    }
+    return null;
+  }
 
-    await this.page.click(
-      'button:has-text("カートに入れる"), button:has-text("Add to Cart"), .add-to-cart-button, input[type="submit"][value*="カート"]',
-    );
-
-    await this.page
-      .waitForSelector('.cart-notification, .success-message, .cart-count-update', {
-        timeout: 10000,
-      })
-      .catch(() => null);
-
+  // addSingleItemToCart は使わない（addToCart をオーバーライドしているため）
+  async addSingleItemToCart(): Promise<boolean> {
     return true;
   }
 }
