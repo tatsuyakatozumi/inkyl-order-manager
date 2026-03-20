@@ -89,12 +89,13 @@ export class FlagTattooAutoOrder extends BaseAutoOrder {
       const beforeCodeRequest = new Date();
 
       console.log('[FlagTattoo] Starting Shopify email verification login');
+      console.log('[FlagTattoo] Current URL:', this.page.url());
       await this.takeScreenshot('login_page');
 
-      // Step 1: Enter email address
-      // Shopify login page has an email input field
+      // Step 1: メール入力欄を探す
+      // placeholder "メールを送信する" の input を探す
       const emailInput = await this.page.waitForSelector(
-        'input[type="email"], input[name="email"], input[autocomplete="email"], #email',
+        'input[placeholder*="メール"], input[type="email"], input[name="email"], input[autocomplete="email"]',
         { timeout: 15000 },
       );
       if (!emailInput) {
@@ -104,37 +105,54 @@ export class FlagTattooAutoOrder extends BaseAutoOrder {
       }
 
       await emailInput.fill(email);
-      console.log('[FlagTattoo] Email entered:', email);
+      console.log('[FlagTattoo] Email entered');
       await this.takeScreenshot('login_email_entered');
 
-      // Step 2: Click continue/submit button
-      const submitButton = await this.page.$(
-        'button[type="submit"], button:has-text("続行"), button:has-text("Continue"), button:has-text("メールを送信"), button:has-text("Send")',
-      );
+      // Step 2: "続行" ボタンをクリック
+      // 注意: "shop で続行する" ボタンもあるので、正確にマッチさせる
+      // テキストが完全一致する "続行" ボタンを優先（Shop Pay の "shop で続行する" を避ける）
+      let submitButton = await this.page.$('button:text-is("続行")');
+      if (!submitButton) {
+        // フォールバック: submit ボタンまたは "Continue" 等
+        submitButton = await this.page.$(
+          'button[type="submit"]:not(:has-text("shop")), button:text-is("Continue")',
+        );
+      }
       if (submitButton) {
         await submitButton.click();
+        console.log('[FlagTattoo] "続行" button clicked');
       } else {
-        // Try pressing Enter
         await emailInput.press('Enter');
+        console.log('[FlagTattoo] Pressed Enter to submit email');
       }
 
-      console.log('[FlagTattoo] Submit clicked, waiting for verification code input');
+      // ページ遷移を待つ
+      await this.page.waitForTimeout(3000);
+      console.log('[FlagTattoo] After submit, URL:', this.page.url());
+      await this.takeScreenshot('login_after_email_submit');
 
-      // Step 3: Wait for the verification code input to appear
-      await this.page.waitForSelector(
-        'input[autocomplete="one-time-code"], input[name="code"], input[inputmode="numeric"], input[type="number"]',
-        { timeout: 15000 },
-      );
+      // Step 3: 認証コード入力欄が表示されるのを待つ
+      const codeInput = await this.page.waitForSelector(
+        'input[autocomplete="one-time-code"], input[name="code"], input[inputmode="numeric"], input[type="number"], input[placeholder*="コード"], input[placeholder*="code"], input[data-action*="verify"]',
+        { timeout: 20000 },
+      ).catch(() => null);
+
+      if (!codeInput) {
+        console.warn('[FlagTattoo] Verification code input not found');
+        await this.takeScreenshot('login_no_code_input');
+        return false;
+      }
+
       await this.takeScreenshot('login_code_input_visible');
       console.log('[FlagTattoo] Verification code input appeared');
 
-      // Step 4: Fetch verification code from Gmail
+      // Step 4: Gmail から認証コードを取得
       console.log('[FlagTattoo] Fetching verification code from Gmail...');
       const code = await fetchShopifyVerificationCode(
         { refreshToken },
         beforeCodeRequest,
-        90_000, // 90 seconds max
-        5_000,  // poll every 5 seconds
+        90_000, // 90秒待機
+        5_000,  // 5秒間隔でポーリング
       );
 
       if (!code) {
@@ -143,36 +161,34 @@ export class FlagTattooAutoOrder extends BaseAutoOrder {
         return false;
       }
 
-      console.log('[FlagTattoo] Verification code retrieved');
+      console.log('[FlagTattoo] Verification code retrieved, entering code');
 
-      // Step 5: Enter verification code
-      const codeInput = await this.page.$(
-        'input[autocomplete="one-time-code"], input[name="code"], input[inputmode="numeric"], input[type="number"]',
-      );
-      if (!codeInput) {
-        console.warn('[FlagTattoo] Code input disappeared');
-        return false;
-      }
-
+      // Step 5: 認証コードを入力
+      // 個別の入力欄（6つ）の場合もあるので、まず1つの入力欄に fill を試みる
       await codeInput.fill(code);
+      await this.page.waitForTimeout(500);
       await this.takeScreenshot('login_code_entered');
 
-      // Step 6: Submit the code (click button or press Enter)
+      // Step 6: 送信ボタンをクリック
+      // "ログイン", "認証する", "確認", "送信" 等の日本語ボタンを探す
       const verifyButton = await this.page.$(
-        'button[type="submit"], button:has-text("ログイン"), button:has-text("確認"), button:has-text("Verify"), button:has-text("Submit"), button:has-text("続行"), button:has-text("Continue")',
+        'button[type="submit"], button:has-text("ログイン"), button:has-text("認証"), button:has-text("確認"), button:has-text("送信"), button:has-text("Verify"), button:has-text("Submit")',
       );
       if (verifyButton) {
         await verifyButton.click();
+        console.log('[FlagTattoo] Verify button clicked');
       } else {
         await codeInput.press('Enter');
+        console.log('[FlagTattoo] Pressed Enter to submit code');
       }
 
-      // Step 7: Wait for login to complete (redirect back to store)
+      // Step 7: ログイン完了を待つ
       console.log('[FlagTattoo] Code submitted, waiting for login to complete...');
       await this.page.waitForTimeout(5000);
+      console.log('[FlagTattoo] After code submit, URL:', this.page.url());
       await this.takeScreenshot('login_after_code_submit');
 
-      // Navigate back to the store to verify login
+      // ストアのトップページに戻ってログイン状態を確認
       await this.page.goto(this.getTopPageUrl(), {
         waitUntil: 'domcontentloaded',
         timeout: 30000,
