@@ -37,10 +37,15 @@ export async function processOrderRequest(event: SlackEvent): Promise<void> {
       return;
     }
 
-    const itemNames = items.map((i: any) => i.name);
+    // name と spec を組み合わせたキーでパーサーに渡す
+    // 例: "ブラックウルフ グローブ [S（100枚/箱）]"
+    // 同じ name でも spec が異なれば別アイテムとして扱える
+    const itemKeys = items.map((i: any) =>
+      i.spec ? `${i.name} [${i.spec}]` : i.name,
+    );
 
     // 2. Parse order request with Claude AI
-    const parsed = await parseOrderRequest(event.text, itemNames);
+    const parsed = await parseOrderRequest(event.text, itemKeys);
 
     if (parsed.items.length === 0) {
       let reply = ':x: 該当する品目が見つかりませんでした。';
@@ -71,7 +76,11 @@ export async function processOrderRequest(event: SlackEvent): Promise<void> {
     const matchedItems: Array<{ dbItem: any; quantity: number }> = [];
 
     for (const parsedItem of parsed.items) {
-      const dbItem = items.find((i: any) => i.name === parsedItem.itemName) as any;
+      // "name [spec]" 形式でマッチを試みる → 見つからなければ name のみで検索
+      const dbItem = (items.find((i: any) => {
+        const key = i.spec ? `${i.name} [${i.spec}]` : i.name;
+        return key === parsedItem.itemName;
+      }) ?? items.find((i: any) => i.name === parsedItem.itemName)) as any;
       if (!dbItem) continue;
 
       matchedItems.push({ dbItem, quantity: parsedItem.quantity });
@@ -192,7 +201,10 @@ export async function processOrderRequest(event: SlackEvent): Promise<void> {
             result?.status === 'cart_added'
               ? ':shopping_trolley:'
               : ':warning:';
-          resultLines.push(`  ${icon} ${item.name} x${item.quantity}`);
+          const displayName = item.spec
+            ? `${item.name}（${item.spec}）`
+            : item.name;
+          resultLines.push(`  ${icon} ${displayName} x${item.quantity}`);
         }
         if (cartUrl) {
           resultLines.push(`  :shopping_bags: <${cartUrl}|カートを確認>`);
